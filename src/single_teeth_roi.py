@@ -3,14 +3,17 @@ import cv2
 import os
 import csv
 
-annotations_path = "../data/coco/disease_all/annotations/instances_train2017.json"  # 替換為標註文件的路徑
+# annotations_path = "../data/coco/disease_all/annotations/instances_train2017.json"  # 替換為標註文件的路徑
+annotations_path = "../data/coco/disease_all/annotations/instances_val2017.json"  # 替換為標註文件的路徑
 # 加載 COCO JSON 標註文件
 with open(annotations_path, "r") as f:
     data = json.load(f)
 
 # 文件夾路徑
-images_dir = "../data/coco/disease_all/train2017"  # 原始全口X光片的圖像目錄
-output_dir = "../data/single_tooth"  # 存放裁剪後牙齒ROI的目錄
+# images_dir = "../data/coco/disease_all/train2017"  # 原始全口X光片的圖像目錄
+images_dir = "../data/coco/disease_all/val2017"  # 原始全口X光片的圖像目錄
+# output_dir = "../data/single_tooth"  # 存放裁剪後牙齒ROI的目錄
+output_dir = "../data/test_single_tooth"  # 存放裁剪後牙齒ROI的目錄
 os.makedirs(output_dir, exist_ok=True)
 
 # 創建圖像 ID 到文件名的映射
@@ -23,7 +26,7 @@ new_images = []  # 用於存放新圖像數據
 # 遍歷標註文件中的每個標註
 for annotation in data["annotations"]:
     image_id = annotation["image_id"]
-    new_image_id = annotation["id"] # 新的圖像 ID
+    new_image_id = annotation["id"]  # 新的圖像 ID
     bbox = annotation["bbox"]  # COCO bbox 格式: [x, y, width, height]
     category_id = annotation["category_id"]  # 類別 ID
 
@@ -44,7 +47,7 @@ for annotation in data["annotations"]:
     output_path = os.path.join(output_dir, f"tooth_{new_image_id}.jpg")
     cv2.imwrite(output_path, roi)
     print(f"Saved: {output_path}")
-    
+
     # 添加新圖像信息
     new_images.append({
         "id": new_image_id,
@@ -72,10 +75,11 @@ new_coco_data = {
 # 保存到新 JSON 文件
 with open("new_annotations.json", "w") as f:
     json.dump(new_coco_data, f)
-    
+
 
 # CSV 文件路徑
-csv_file = "../data/annotations.csv"
+# csv_file = "../data/annotations.csv"
+csv_file = "../data/test_annotations.csv"
 
 # 寫入裁剪圖像的標註
 with open(csv_file, "w", newline="") as f:
@@ -85,4 +89,3 @@ with open(csv_file, "w", newline="") as f:
         file_name = new_images[annotation["image_id"]]["file_name"]
         category_id = annotation["category_id"]
         writer.writerow([file_name, category_id])
-

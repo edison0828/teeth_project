@@ -13,15 +13,21 @@ model = models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
 # model = models.resnet50(pretrained=True)
 
 # 替換分類層
-num_classes = 4  # 假設有 32 顆牙齒類別
+num_classes = 4  # 假設有 4類別
 model.fc = nn.Linear(model.fc.in_features, num_classes)
 
+# 凍結所有層
 for param in model.parameters():
-    param.requires_grad = False  # 凍結所有層
+    param.requires_grad = False
 
-# 只解凍分類層
-for param in model.fc.parameters():
-    param.requires_grad = True
+# # 只解凍分類層
+# for param in model.fc.parameters():
+#     param.requires_grad = True
+
+# 解凍 ResNet 最後的 layer4 和分類層
+for name, param in model.named_parameters():
+    if "layer4" in name or "fc" in name:
+        param.requires_grad = True
 
 # 數據增強與預處理
 transform = transforms.Compose([
@@ -33,6 +39,8 @@ transform = transforms.Compose([
 ])
 
 # 自定義數據集
+
+
 class ToothDataset(Dataset):
     def __init__(self, csv_file, root_dir, transform=None):
         import pandas as pd
@@ -51,25 +59,32 @@ class ToothDataset(Dataset):
             image = self.transform(image)
         return image, label
 
+
 # 加載數據集
-train_dataset = ToothDataset(csv_file="../data/annotations.csv", root_dir="../data/single_tooth", transform=transform)
+train_dataset = ToothDataset(csv_file="../data/annotations.csv",
+                             root_dir="../data/single_tooth", transform=transform)
 train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
 
-optimizer = torch.optim.Adam(model.fc.parameters(), lr=0.001)  # 只優化分類層
+# optimizer = torch.optim.Adam(model.fc.parameters(), lr=0.001)  # 只優化分類層
+# 優化器：分類層和解凍的特徵層分別設置不同學習率
+optimizer = torch.optim.Adam([
+    {"params": model.layer4.parameters(), "lr": 1e-4},  # 特徵提取層學習率較小
+    {"params": model.fc.parameters(), "lr": 1e-3}       # 分類層學習率較大
+])
 criterion = nn.CrossEntropyLoss()
 
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # if torch.backends.mps.is_available():
 #     device = torch.device("mps")  # 使用 MPS 加速
 # elif torch.cuda.is_available():
 #     device = torch.device("cuda")  # 使用 CUDA 加速
 # else:
-device = torch.device("cpu")  # 默認使用 CPU
+#     device = torch.device("cpu")  # 默認使用 CPU
 
 model = model.to(device)
 
 # 訓練過程
-epochs = 10
+epochs = 100
 for epoch in range(epochs):
     model.train()
     running_loss = 0.0
@@ -89,10 +104,11 @@ for epoch in range(epochs):
 
             # 在進度條中顯示當前損失
             t.set_postfix(loss=loss.item())
-    
+
     # 打印當前 epoch 的平均損失
-    print(f"Epoch {epoch+1}/{epochs}, Average Loss: {running_loss/len(train_loader):.4f}")
+    print(
+        f"Epoch {epoch+1}/{epochs}, Average Loss: {running_loss/len(train_loader):.4f}")
 
 # 保存模型權重
-torch.save(model.state_dict(), "model_weights.pth")
+torch.save(model.state_dict(), "model_weights2.pth")
 print("Model weights saved!")

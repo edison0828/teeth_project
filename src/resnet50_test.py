@@ -37,7 +37,7 @@ transform = transforms.Compose([
 
 # 構建測試數據集和 DataLoader
 test_dataset = TestDataset(
-    csv_file="test_annotations.csv", root_dir="test_images", transform=transform)
+    csv_file="../data/test_annotations.csv", root_dir="../data/single_tooth", transform=transform)
 test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
 
 # 加載模型
