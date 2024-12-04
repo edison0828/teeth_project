@@ -1,11 +1,15 @@
 __pycache__/
+test.py
 *.pyc
 *.pkl
 *.pt
 *.h5
 .env
-data/
-models/
+data/*
+!data/.gitkeep
+models/*
+!models/.gitkeep
+src/runs/*
 
 # Python cache
 __pycache__/

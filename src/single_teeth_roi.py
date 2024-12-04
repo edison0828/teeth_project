@@ -3,17 +3,18 @@ import cv2
 import os
 import csv
 
-# annotations_path = "../data/coco/disease_all/annotations/instances_train2017.json"  # 替換為標註文件的路徑
-annotations_path = "../data/coco/disease_all/annotations/instances_val2017.json"  # 替換為標註文件的路徑
+# 替換為訓練集標註文件的路徑
+annotations_path = "../data/coco/disease/annotations/instances_train2017.json"
+# annotations_path = "../data/coco/disease/annotations/instances_val2017.json"  # 替換為驗證集標註文件的路徑
 # 加載 COCO JSON 標註文件
 with open(annotations_path, "r") as f:
     data = json.load(f)
 
 # 文件夾路徑
-# images_dir = "../data/coco/disease_all/train2017"  # 原始全口X光片的圖像目錄
-images_dir = "../data/coco/disease_all/val2017"  # 原始全口X光片的圖像目錄
-# output_dir = "../data/single_tooth"  # 存放裁剪後牙齒ROI的目錄
-output_dir = "../data/test_single_tooth"  # 存放裁剪後牙齒ROI的目錄
+images_dir = "../data/coco/disease_all/train2017"  # 原始全口X光片的圖像目錄
+
+output_dir = "../data/train_single_tooth"  # 存放裁剪後訓練牙齒ROI的目錄
+# output_dir = "../data/test_single_tooth"  # 存放裁剪後驗證牙齒ROI的目錄
 os.makedirs(output_dir, exist_ok=True)
 
 # 創建圖像 ID 到文件名的映射
@@ -73,19 +74,21 @@ new_coco_data = {
 }
 
 # 保存到新 JSON 文件
-with open("new_annotations.json", "w") as f:
+with open("data/train_annotations.json", "w") as f:
     json.dump(new_coco_data, f)
-
+# with open("data/test_annotations.json", "w") as f:
+#     json.dump(new_coco_data, f)
 
 # CSV 文件路徑
-# csv_file = "../data/annotations.csv"
-csv_file = "../data/test_annotations.csv"
+csv_file = "../data/train_annotations.csv"
+# csv_file = "../data/test_annotations.csv"
 
 # 寫入裁剪圖像的標註
 with open(csv_file, "w", newline="") as f:
     writer = csv.writer(f)
     writer.writerow(["file_name", "category_id"])  # 標題行
     for annotation in new_annotations:
-        file_name = new_images[annotation["image_id"]]["file_name"]
+        file_name = next(img["file_name"]
+                         for img in new_images if img["id"] == annotation["image_id"])
         category_id = annotation["category_id"]
         writer.writerow([file_name, category_id])
