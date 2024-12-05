@@ -44,14 +44,17 @@ test_dataset = TestDataset(
     csv_file="../data/test_annotations.csv", root_dir="../data/test_single_tooth", transform=transform)
 test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
 
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # 加載模型
 num_classes = 4
 model = resnet50(weights=None)  # 構建模型結構
 model.fc = nn.Linear(model.fc.in_features, num_classes)  # 替換分類層
 model.load_state_dict(torch.load(
-    "../models/model_weights4.pth", weights_only=True))  # 加載權重
+    "../models/model_weights4.pth", map_location=device))  # 加載權重
+# model.load_state_dict(torch.load(
+#     "../models/model_weights4.pth", weights_only=True))  # 加載權重
 model.eval()  # 設置為評估模式
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if torch.backends.mps.is_available():
     device = torch.device("mps")  # 使用 MPS 加速
 model.to(device)

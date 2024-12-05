@@ -72,11 +72,10 @@ new_coco_data = {
     "annotations": new_annotations,
     "categories": data["categories"]  # 保留原始的類別標籤
 }
-
 # 保存到新 JSON 文件
-with open("data/train_annotations.json", "w") as f:
+with open("../data/train_annotations.json", "w") as f:
     json.dump(new_coco_data, f)
-# with open("data/test_annotations.json", "w") as f:
+# with open("../data/test_annotations.json", "w") as f:
 #     json.dump(new_coco_data, f)
 
 # CSV 文件路徑

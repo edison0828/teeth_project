@@ -10,6 +10,7 @@ data/*
 models/*
 !models/.gitkeep
 src/runs/*
+.DS_Store
 
 # Python cache
 __pycache__/

@@ -158,5 +158,5 @@ for epoch in range(epochs):
           f"Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.4f}")
 
 # 保存模型權重
-torch.save(model.state_dict(), "model_weights4.pth")
+torch.save(model.state_dict(), "../models/model_weights4.pth")
 print("Model weights saved!")
