@@ -14,7 +14,7 @@ model = models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
 # model = models.resnet50(pretrained=True)
 
 # 替換分類層
-num_classes = 4  # 假設有 4類別
+num_classes = 5  # 假設有 4類別
 model.fc = nn.Linear(model.fc.in_features, num_classes)
 
 # 凍結所有層
@@ -88,8 +88,11 @@ model = model.to(device)
 # 創建 TensorBoard SummaryWriter
 writer = SummaryWriter("runs/tooth_classification_experiment")
 
+# 初始化變數來跟踪最佳驗證準確率
+best_val_accuracy = 0.0
+best_model_path = "../models/best_model_weights.pth"  # 保存最佳模型的路徑
 # 訓練過程
-epochs = 50
+epochs = 30
 for epoch in range(epochs):
     model.train()
     running_loss = 0.0
@@ -156,7 +159,14 @@ for epoch in range(epochs):
     # 打印當前 epoch 的平均損失和準確率
     print(f"Epoch {epoch+1}/{epochs}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.4f}, "
           f"Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.4f}")
+    # 如果當前驗證準確率比之前最佳準確率高，保存模型權重
+    if val_accuracy > best_val_accuracy:
+        best_val_accuracy = val_accuracy
+        torch.save(model.state_dict(), best_model_path)
+        print(
+            f"New best model saved with Val Accuracy: {best_val_accuracy:.4f}")
 
-# 保存模型權重
-torch.save(model.state_dict(), "../models/model_weights4.pth")
+# # 保存最後一個 epoch 的模型權重（可選）
+# final_model_path = "../models/final_model_weights.pth"
+# torch.save(model.state_dict(), final_model_path)
 print("Model weights saved!")

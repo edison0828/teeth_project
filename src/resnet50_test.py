@@ -47,11 +47,11 @@ test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # 加載模型
-num_classes = 4
+num_classes = 5
 model = resnet50(weights=None)  # 構建模型結構
 model.fc = nn.Linear(model.fc.in_features, num_classes)  # 替換分類層
 model.load_state_dict(torch.load(
-    "../models/model_weights4.pth", map_location=device))  # 加載權重
+    "../models/model_weights5.pth", map_location=device))  # 加載權重
 # model.load_state_dict(torch.load(
 #     "../models/model_weights4.pth", weights_only=True))  # 加載權重
 model.eval()  # 設置為評估模式
@@ -94,15 +94,15 @@ print(cm)
 
 # 詳細分類報告
 report = classification_report(y_true, y_pred, target_names=[
-                               "Impacted", "Caries", "Periapical Lesion", "Deep Caries"])
+                               "Impacted", "Caries", "Periapical Lesion", "Deep Caries", "Normal"])
 print("Classification Report:")
 print(report)
 
 # 可視化混淆矩陣
 
-plt.figure(figsize=(8, 6))
+plt.figure(figsize=(10, 8))
 sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=[
-            "Impacted", "Caries", "Periapical Lesion", "Deep Caries"], yticklabels=["Impacted", "Caries", "Periapical Lesion", "Deep Caries"])
+            "Impacted", "Caries", "Periapical Lesion", "Deep Caries", "Normal"], yticklabels=["Impacted", "Caries", "Periapical Lesion", "Deep Caries", "Normal"])
 plt.xlabel('Predicted')
 plt.ylabel('True')
 plt.title('Confusion Matrix')
