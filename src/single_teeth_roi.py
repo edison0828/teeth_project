@@ -4,24 +4,33 @@ import os
 import csv
 
 # 替換為訓練集標註文件的路徑
-disease_annotations_path = "../data/coco/disease/annotations/instances_train2017.json"
-normal_annotations_path = "../data/coco/disease/annotations/normal_sample_train.json"
+# disease_annotations_path = "../data/coco/disease/annotations/instances_train2017.json"
+# normal_annotations_path = "../data/coco/disease/annotations/normal_sample_train.json"
 
-# # 替換為驗證集標註文件的路徑
-# disease_annotations_path = "../data/coco/disease/annotations/instances_val2017.json"
-# normal_annotations_path = "../data/coco/disease/annotations/normal_sample_val.json"
+# 替換為驗證集標註文件的路徑
+disease_annotations_path = "../data/coco/disease/annotations/instances_val2017.json"
+normal_annotations_path = "../data/coco/disease/annotations/normal_sample_val.json"
+
+# # # 替換為驗證集標註文件的路徑
+# disease_annotations_path = "../data/coco/disease/annotations/all_teeth_val.json"
+# normal_annotations_path = "../data/coco/disease/annotations/all_teeth_val.json"
 
 # 圖像資料夾路徑train
-disease_images_dir = "../data/coco/disease/train2017"  # 有問題牙齒的影像
+# disease_images_dir = "../data/coco/disease/train2017"  # 有問題牙齒的影像
+# normal_images_dir = "../data/coco/disease/train2017"  # 正常牙齒的影像訓練集
+
+# # 圖像資料夾路徑val
+disease_images_dir = "../data/coco/disease/val2017"  # 有問題牙齒的影像
 normal_images_dir = "../data/coco/disease/train2017"  # 正常牙齒的影像訓練集
 
 # # 圖像資料夾路徑val
 # disease_images_dir = "../data/coco/disease/val2017"  # 有問題牙齒的影像
-# normal_images_dir = "../data/coco/disease/train2017"  # 正常牙齒的影像訓練集
+# normal_images_dir = "../data/coco/disease/val2017"  # 正常牙齒的影像訓練集
 
+# output_dir = "../data/train_single_tooth"  # 存放裁剪後訓練牙齒ROI的目錄
+output_dir = "../data/test_single_tooth"  # 存放裁剪後驗證牙齒ROI的目錄
+# output_dir = "../data/map_single_tooth"  # 存放裁剪後驗證牙齒ROI的目錄
 
-output_dir = "../data/train_single_tooth"  # 存放裁剪後訓練牙齒ROI的目錄
-# output_dir = "../data/test_single_tooth"  # 存放裁剪後驗證牙齒ROI的目錄
 os.makedirs(output_dir, exist_ok=True)
 
 # 加載標註文件
@@ -79,7 +88,9 @@ def process_annotations(data, image_dict, images_dir, category_override=None):
         new_annotations.append({
             "id": new_image_id,
             "image_id": new_image_id,
-            "category_id": category_id
+            "category_id": category_id,
+            "bbox": bbox,  # 保留原始 bbox 資料
+            "original_file_name": image_info["file_name"]  # 保留原始文件名
         })
 
         new_image_id += 1
@@ -99,21 +110,28 @@ new_coco_data = {
     "categories": disease_data["categories"] + [{"id": 4, "name": "normal"}]
 }
 # 保存到新 JSON 文件
-with open("../data/train_annotations.json", "w") as f:
+# with open("../data/train_annotations.json", "w") as f:
+#     json.dump(new_coco_data, f)
+with open("../data/test_annotations.json", "w") as f:
     json.dump(new_coco_data, f)
-# with open("../data/test_annotations.json", "w") as f:
+# with open("../data/map_annotations.json", "w") as f:
 #     json.dump(new_coco_data, f)
 
 # CSV 文件路徑
-csv_file = "../data/train_annotations.csv"
-# csv_file = "../data/test_annotations.csv"
+# csv_file = "../data/train_annotations.csv"
+csv_file = "../data/test_annotations.csv"
+# csv_file = "../data/map_annotations.csv"
+
 
 # 寫入裁剪圖像的標註
 with open(csv_file, "w", newline="") as f:
     writer = csv.writer(f)
-    writer.writerow(["file_name", "category_id"])  # 標題行
+    writer.writerow(["file_name", "category_id",
+                    "original_file_name", "bbox"])  # 標題行
     for annotation in new_annotations:
         file_name = next(img["file_name"]
                          for img in new_images if img["id"] == annotation["image_id"])
         category_id = annotation["category_id"]
-        writer.writerow([file_name, category_id])
+        original_file_name = annotation["original_file_name"]
+        bbox = annotation["bbox"]
+        writer.writerow([file_name, category_id, original_file_name, bbox])

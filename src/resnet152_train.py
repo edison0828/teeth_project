@@ -8,8 +8,8 @@ from tqdm import tqdm  # 引入 tqdm
 from torch.utils.tensorboard import SummaryWriter
 
 # 新的方式
-from torchvision.models import ResNet50_Weights
-model = models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
+from torchvision.models import ResNet152_Weights
+model = models.resnet152(weights=ResNet152_Weights.IMAGENET1K_V2)
 # 加載 ResNet-50 預訓練模型
 # model = models.resnet50(pretrained=True)
 
@@ -86,11 +86,11 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = model.to(device)
 
 # 創建 TensorBoard SummaryWriter
-writer = SummaryWriter("runs/tooth_classification_experiment")
+writer = SummaryWriter("runs/tooth_classification_resnet152")
 
 # 初始化變數來跟踪最佳驗證準確率
 best_val_accuracy = 0.0
-best_model_path = "../models/resnet50_model_weights.pth"  # 保存最佳模型的路徑
+best_model_path = "../models/resnet152_model_weights.pth"  # 保存最佳模型的路徑
 # 訓練過程
 epochs = 30
 for epoch in range(epochs):

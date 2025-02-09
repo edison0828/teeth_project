@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 from torchvision import transforms
-from torchvision.models import resnet50
+from torchvision import models
 from torch.utils.data import DataLoader, Dataset
 from PIL import Image
 import os
@@ -60,10 +60,10 @@ test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # 加載模型
 num_classes = 5
-model = resnet50(weights=None)  # 構建模型結構
+model = models.resnet152(weights=None)  # 構建模型結構
 model.fc = nn.Linear(model.fc.in_features, num_classes)  # 替換分類層
 model.load_state_dict(torch.load(
-    "../models/best_model_weights.pth", map_location=device))  # 加載權重
+    "../models/resnet152_model_weights.pth", map_location=device))  # 加載權重
 # model.load_state_dict(torch.load(
 #     "../models/model_weights4.pth", weights_only=True))  # 加載權重
 model.eval()  # 設置為評估模式
