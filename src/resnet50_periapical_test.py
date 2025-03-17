@@ -77,7 +77,7 @@ num_classes = 2
 model = resnet50(weights=None)
 model.fc = nn.Linear(model.fc.in_features, num_classes)
 model.load_state_dict(torch.load(
-    "../models/resnet50_model_weights_periapical.pth", map_location=device))
+    "../models/resnet50_model_weights_periapical_unfreeze2_layers_undersample_1_2.pth", map_location=device))
 model.eval()
 if torch.backends.mps.is_available():
     device = torch.device("mps")
@@ -115,14 +115,14 @@ with torch.no_grad():  # 關閉梯度計算，加速推理
         outputs = model(images)  # 模型推理
         probabilities = nn.functional.softmax(outputs, dim=1)  # 轉為機率
         confidence, predicted = torch.max(probabilities, 1)  # 獲取置信度和類別
-        # 针对每个样本检查预测类别和置信度
-        for i in range(len(confidence)):
-            # 获取预测类别及其对应的阈值，默认为 0.7
-            pred_class = predicted[i].item()
-            threshold = class_thresholds.get(pred_class, 0.7)
-            if confidence[i] < threshold:
-                # 当预测的置信度低于该类别的阈值时，可以选择将其标记为 -1 或其它特殊标记
-                predicted[i] = 1
+        # # 针对每个样本检查预测类别和置信度
+        # for i in range(len(confidence)):
+        #     # 获取预测类别及其对应的阈值，默认为 0.7
+        #     pred_class = predicted[i].item()
+        #     threshold = class_thresholds.get(pred_class, 0.7)
+        #     if confidence[i] < threshold:
+        #         # 当预测的置信度低于该类别的阈值时，可以选择将其标记为 -1 或其它特殊标记
+        #         predicted[i] = 1
         total += labels.size(0)
         correct += (predicted == labels).sum().item()
         y_true.extend(labels.cpu().numpy())  # 儲存真實標籤
