@@ -1,4 +1,7 @@
+from calendar import c
 import os
+from regex import T
+from sympy import true
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -104,7 +107,7 @@ def balance_dataset(data, minority_class=1, ratio=5):
 
 
 def train_model(csv_train, csv_val, img_dir_train, img_dir_valid, model_save_path,
-                minority_class=1, epochs=50, patience=10, experiment_log="experiment_log.csv"):
+                minority_class=1, epochs=50, patience=10, experiment_log="experiment_log.csv", tensorboard_log="runs/resnet50_Impacted_root_unfreeze2_layers_undersample_1_5"):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     transform = transforms.Compose([
@@ -130,31 +133,84 @@ def train_model(csv_train, csv_val, img_dir_train, img_dir_valid, model_save_pat
     sampler = WeightedRandomSampler(
         sample_weights, len(sample_weights), replacement=True)
 
-    train_loader = DataLoader(train_dataset, batch_size=16, sampler=sampler)
-    val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=32, sampler=sampler)
+    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
 
-    model = models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
-    model.fc = nn.Linear(model.fc.in_features, 2)
+    # IMAGENET 預訓練權重
+    # model = models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
+    # model.fc = nn.Linear(model.fc.in_features, 2)
+
+    # SwAV 預訓練權重
+    swav_model_path = "../models/cvpr21_newt_pretrained_models/cvpr21_newt_pretrained_models/pt/inat2021_swav_mini_1000_ep.pth"
+    swav_weights = torch.load(
+        swav_model_path, map_location=device)
+    model = models.resnet50(weights=None)
+
+    # 創建新的狀態字典去除前綴
+    from collections import OrderedDict
+    new_state_dict = OrderedDict()
+
+    if "state_dict" in swav_weights:
+        state_dict = swav_weights["state_dict"]
+    else:
+        state_dict = swav_weights
+
+    for k, v in state_dict.items():
+        if k.startswith("module."):
+            name = k[7:]  # 移除 "module." 前綴
+        else:
+            name = k
+        new_state_dict[name] = v
+
+    # 使用修改後的權重載入（只嘗試一次，使用strict=False）
+    result = model.load_state_dict(new_state_dict, strict=False)
+    print(f"已忽略的參數數量: {len(result.missing_keys)}")
+    print(f"未使用的預訓練參數數量: {len(result.unexpected_keys)}")
+
+    # 定義新的 fc 層
+    num_ftrs = model.fc.in_features  # 取得原始 fc 層的輸入維度 (2048)
+    model.fc = nn.Sequential(
+        nn.Linear(num_ftrs, 2048),  # fc1
+        nn.Dropout(p=0.5),          # Dropout
+        nn.Linear(2048, 2048),      # fc2
+        nn.ReLU(),                  # ReLU
+        nn.Dropout(p=0.5),          # Dropout
+        nn.Linear(2048, 2)          # fc3 (最後分類層，輸出為 2 類)
+    )
 
     for param in model.parameters():
         param.requires_grad = False
     for name, param in model.named_parameters():
         if "layer4" in name or "fc" in name:
             param.requires_grad = True
+    print("\n✅ Trainable Layers:")
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(f" - {name}")
+
+    # for name, param in model.named_parameters():
+    #     if "fc" in name:
+    #         param.requires_grad = True
 
     model = model.to(device)
 
-    criterion = FocalLoss(gamma=2, weight=torch.tensor(
-        class_weights, dtype=torch.float).to(device))
+    # loss function
+    # criterion = FocalLoss(gamma=2, weight=torch.tensor(
+    #     class_weights, dtype=torch.float).to(device))
+    criterion = nn.CrossEntropyLoss()
+
+    # optimizer
+    # optimizer = torch.optim.Adam(model.fc.parameters(), lr=0.001)  # 只優化分類層
     optimizer = optim.AdamW([
         {"params": model.layer4.parameters(), "lr": 1e-4},
         {"params": model.fc.parameters(), "lr": 1e-3}
     ])
+
+    # 學習率衰減
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
     # 創建 TensorBoard SummaryWriter
-    writer = SummaryWriter(
-        "runs/resnet50_Impacted_root_unfreeze2_layers_undersample_1_5")
+    writer = SummaryWriter(tensorboard_log)
 
     best_accuracy = 0
     epochs_no_improve = 0
@@ -258,12 +314,12 @@ train_csv = os.path.join(
     "binary_datasets",
     # "Periapical_Lesion_vs_Normal",
     # "Periapical_Lesion_annotations.csv"
-    # "Caries_vs_Normal",
-    # "Caries_annotations.csv"
+    "Caries_vs_Normal",
+    "Caries_annotations.csv"
     # "Retained_dental_root_vs_Normal",
     # "Retained_dental_root_annotations.csv"
-    "Impacted_vs_Normal",
-    "Impacted_annotations.csv"
+    # "Impacted_vs_Normal",
+    # "Impacted_annotations.csv"
 )
 
 valid_csv = os.path.join(
@@ -274,12 +330,12 @@ valid_csv = os.path.join(
     "binary_datasets",
     # "Periapical_Lesion_vs_Normal",
     # "Periapical_Lesion_annotations.csv"
-    # "Caries_vs_Normal",
-    # "Caries_annotations.csv"
+    "Caries_vs_Normal",
+    "Caries_annotations.csv"
     # "Retained_dental_root_vs_Normal",
     # "Retained_dental_root_annotations.csv"
-    "Impacted_vs_Normal",
-    "Impacted_annotations.csv"
+    # "Impacted_vs_Normal",
+    # "Impacted_annotations.csv"
 )
 
 train_img_dir = os.path.join(
@@ -299,10 +355,13 @@ valid_img_dir = os.path.join(
 )
 
 model_path = os.path.join(
-    base_dir, "models", "resnet50_Impacted_seg_unfreeze_2layers.pth")
+    base_dir, "models", "resnet50_swav_no_scheduler_caies_seg_unfreeze_2layers.pth")
 
 # 確保模型目錄存在
 os.makedirs(os.path.dirname(model_path), exist_ok=True)
+
+tensor_board_log = os.path.join(
+    base_dir, "src", "runs", "resnet50_swav_no_scheduler_caries_seg_unfreeze_2layers_undersample_1_1")
 
 # 使用絕對路徑呼叫訓練函數
 train_model(
@@ -313,8 +372,9 @@ train_model(
     model_save_path=model_path,
     minority_class=1,
     epochs=200,
-    patience=20,
-    experiment_log="experiment_log.csv"
+    patience=50,
+    experiment_log="experiment_log.csv",
+    tensorboard_log=tensor_board_log
 )
 
 # train_model(

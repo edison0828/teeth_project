@@ -3,3 +3,8 @@ G:\Github-repos\teeth_project\data\dentex2023 disease.v6i.coco\train\binary_data
 G:\Github-repos\teeth_project\data\dentex2023 disease.v6i.coco\train\binary_datasets\Caries_vs_Normal\Caries_annotations.csv,200,0.9320288362512873,G:\Github-repos\teeth_project\models\resnet50_caries_seg_unfreeze_2layers.pth
 G:\Github-repos\teeth_project\data\dentex2023 disease.v6i.coco\train\binary_datasets\Retained_dental_root_vs_Normal\Retained_dental_root_annotations.csv,200,0.9375,G:\Github-repos\teeth_project\models\resnet50_Retained_dental_root_seg_unfreeze_2layers.pth
 G:\Github-repos\teeth_project\data\dentex2023 disease.v6i.coco\train\binary_datasets\Impacted_vs_Normal\Impacted_annotations.csv,200,0.9752066115702479,G:\Github-repos\teeth_project\models\resnet50_Impacted_seg_unfreeze_2layers.pth
+
+G:\Github-repos\teeth_project\data\dentex2023 disease.v6i.coco\train\binary_datasets\Caries_vs_Normal\Caries_annotations.csv,200,0.898043254376931,G:\Github-repos\teeth_project\models\resnet50_swav_caries_seg_unfreeze_1layers.pth
+G:\Github-repos\teeth_project\data\dentex2023 disease.v6i.coco\train\binary_datasets\Caries_vs_Normal\Caries_annotations.csv,200,0.9248197734294542,G:\Github-repos\teeth_project\models\resnet50_swav_caries_seg_unfreeze_2layers.pth
+G:\Github-repos\teeth_project\data\dentex2023 disease.v6i.coco\train\binary_datasets\Periapical_Lesion_vs_Normal\Periapical_Lesion_annotations.csv,200,0.9369369369369369,G:\Github-repos\teeth_project\models\resnet50_swav_periapical_seg_unfreeze_2layers.pth
+G:\Github-repos\teeth_project\data\dentex2023 disease.v6i.coco\train\binary_datasets\Caries_vs_Normal\Caries_annotations.csv,200,0.9340885684860968,G:\Github-repos\teeth_project\models\resnet50_swav_no_scheduler_caies_seg_unfreeze_2layers.pth

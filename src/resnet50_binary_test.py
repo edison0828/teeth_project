@@ -49,6 +49,16 @@ def test_model(csv_test, img_dir, model_path, output_csv, gradcam_dir=None, mino
 
     model = models.resnet50()
     model.fc = nn.Linear(model.fc.in_features, 2)
+    # # 定義新的 fc 層
+    # num_ftrs = model.fc.in_features  # 取得原始 fc 層的輸入維度 (2048)
+    # model.fc = nn.Sequential(
+    #     nn.Linear(num_ftrs, 2048),  # fc1
+    #     nn.Dropout(p=0.5),          # Dropout
+    #     nn.Linear(2048, 2048),      # fc2
+    #     nn.ReLU(),                  # ReLU
+    #     nn.Dropout(p=0.5),          # Dropout
+    #     nn.Linear(2048, 2)          # fc3 (最後分類層，輸出為 2 類)
+    # )
     model.load_state_dict(torch.load(model_path, map_location=device))
     model = model.to(device)
     model.eval()
@@ -119,14 +129,14 @@ def test_model(csv_test, img_dir, model_path, output_csv, gradcam_dir=None, mino
 
 
 # 呼叫範例
-# test_model("../data\dentex2023 disease.v6i.coco/test/binary_datasets\Periapical_Lesion_vs_Normal\Periapical_Lesion_annotations.csv", "../data/dentex2023 disease.v6i.coco/test/rois",
-#            "../models/resnet50_periapical_seg_unfreeze_2layers.pth",
-#            "../data/dentex2023 disease.v6i.coco/test/binary_datasets\Periapical_Lesion_vs_Normal\Periapical_Lesion_predict.csv")
+test_model("../data\dentex2023 disease.v6i.coco/test/binary_datasets\Periapical_Lesion_vs_Normal\Periapical_Lesion_annotations.csv", "../data/dentex2023 disease.v6i.coco/test/rois",
+           "../models/resnet50_periapical_seg_unfreeze_2layers.pth",
+           "../data/dentex2023 disease.v6i.coco/test/binary_datasets\Periapical_Lesion_vs_Normal\Periapical_Lesion_predict.csv")
 
 # 呼叫範例
-test_model("../data\dentex2023 disease.v6i.coco/test/binary_datasets\Caries_vs_Normal\Caries_annotations.csv", "../data/dentex2023 disease.v6i.coco/test/rois",
-           "../models/resnet50_caries_seg_unfreeze_2layers.pth",
-           "../data/dentex2023 disease.v6i.coco/test/binary_datasets\Caries_vs_Normal\Caries_predict.csv")
+# test_model("../data\dentex2023 disease.v6i.coco/test/binary_datasets\Caries_vs_Normal\Caries_annotations.csv", "../data/dentex2023 disease.v6i.coco/test/rois",
+#            "../models/resnet50_swav_caries_seg_unfreeze_2layers.pth",
+#            "../data/dentex2023 disease.v6i.coco/test/binary_datasets\Caries_vs_Normal\Caries_predict.csv")
 
 # # 呼叫範例
 # test_model("../data\dentex2023 disease.v6i.coco/test/binary_datasets\Retained_dental_root_vs_Normal\Retained_dental_root_annotations.csv", "../data/dentex2023 disease.v6i.coco/test/rois",
