@@ -361,33 +361,35 @@ model_path = os.path.join(
 os.makedirs(os.path.dirname(model_path), exist_ok=True)
 
 tensor_board_log = os.path.join(
-    base_dir, "src", "runs", "resnet50_swav_no_scheduler_caries_seg_unfreeze_2layers_undersample_1_1")
+    base_dir, "src", "runs", "resnet50_swav_caries_seg_unfreeze_2layers_undersample_1_1")
 
 # 使用絕對路徑呼叫訓練函數
-train_model(
-    csv_train=train_csv,
-    csv_val=valid_csv,
-    img_dir_train=train_img_dir,
-    img_dir_valid=valid_img_dir,
-    model_save_path=model_path,
-    minority_class=1,
-    epochs=200,
-    patience=50,
-    experiment_log="experiment_log.csv",
-    tensorboard_log=tensor_board_log
-)
-
 # train_model(
-#     csv_train="../data/dentex2023 disease.v6i.coco/train/binary_datasets/Impacted_vs_Normal/Impacte_annotations.csv",
-#     csv_val="../data/dentex2023 disease.v6i.coco/val/binary_datasets/Impacted_vs_Normal/Impacte_annotations.csv",
+#     csv_train=train_csv,
+#     csv_val=valid_csv,
 #     img_dir_train=train_img_dir,
 #     img_dir_valid=valid_img_dir,
 #     model_save_path=model_path,
 #     minority_class=1,
 #     epochs=200,
-#     patience=20,
-#     experiment_log="experiment_log.csv"
+#     patience=50,
+#     experiment_log="experiment_log.csv",
+#     tensorboard_log=tensor_board_log
 # )
+
+# bbox train
+train_model(
+    csv_train="../data/dentex2023 disease.v6i.coco/train/roi_bbox/binary_datasets/Caries_vs_Normal/Caries_annotations.csv",
+    csv_val="../data/dentex2023 disease.v6i.coco/valid/roi_bbox/binary_datasets/Caries_vs_Normal/Caries_annotations.csv",
+    img_dir_train="../data/dentex2023 disease.v6i.coco/train/roi_bbox/rois",
+    img_dir_valid="../data/dentex2023 disease.v6i.coco/valid/roi_bbox/rois",
+    model_save_path="../models/resnet50_swav_caries_bbox_unfreeze_1layers.pth",
+    minority_class=1,
+    epochs=300,
+    patience=50,
+    experiment_log="experiment_log.csv",
+    tensorboard_log="runs/resnet50_swav_caries_bbox_unfreeze_1layers"
+)
 
 # train_model(
 #     csv_train="../data/dentex2023 disease.v6i.coco/train/binary_datasets/Retained_dental_root_vs_Normal/Retained_dental_root_annotations.csv",
