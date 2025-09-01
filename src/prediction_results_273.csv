@@ -1,0 +1,32 @@
+file_name,ground_truth_label,predicted_class,confidence
+Impacted_1_bbox_fixed.png,Impacted,0,0.9999994039535522
+Impacted_2_bbox_fixed.png,Impacted,0,0.9999994039535522
+Caries_3_bbox_fixed.png,Caries,1,1.0
+Caries_4_bbox_fixed.png,Caries,1,0.9272425174713135
+Caries_5_bbox_fixed.png,Caries,1,0.9991563558578491
+Impacted_6_bbox_fixed.png,Impacted,0,0.9999969005584717
+Impacted_7_bbox_fixed.png,Impacted,0,0.9999815225601196
+Caries_8_bbox_fixed.png,Caries,1,0.9451690912246704
+Caries_9_bbox_fixed.png,Caries,1,0.9999991655349731
+Caries_A_bbox_fixed.png,Caries,1,0.7663092613220215
+Caries_B_bbox_fixed.png,Caries,1,0.9999998807907104
+Caries_C_bbox_fixed.png,Caries,1,0.9292181730270386
+Caries_D_bbox_fixed.png,Caries,1,0.9980012774467468
+Caries_E_bbox_fixed.png,Caries,0,0.9357303380966187
+Caries_F_bbox_fixed.png,Caries,0,0.6141176819801331
+Caries_G_bbox_fixed.png,Caries,1,0.9052151441574097
+Caries_H_bbox_fixed.png,Caries,0,0.9573624730110168
+Caries_I_bbox_fixed.png,Caries,1,0.9946451187133789
+Caries_J_bbox_fixed.png,Caries,1,0.9998364448547363
+Periapical Lesion_K_bbox_fixed.png,Periapical Lesion,1,0.9999840259552002
+Caries_L_bbox_fixed.png,Caries,1,0.9551756978034973
+Caries_M_bbox_fixed.png,Caries,1,0.9916902780532837
+Periapical Lesion_N_bbox_fixed.png,Periapical Lesion,1,0.9773468375205994
+46_R_bbox_fixed.png,46,1,0.9998724460601807
+44_Y_bbox_fixed.png,44,0,0.997989296913147
+17_f_bbox_fixed.png,17,1,0.9999992847442627
+43_g_bbox_fixed.png,43,0,0.9996836185455322
+43_h_bbox_fixed.png,43,0,0.9987273812294006
+42_k_bbox_fixed.png,42,0,1.0
+41_n_bbox_fixed.png,41,0,0.9999991655349731
+41_o_bbox_fixed.png,41,0,0.9999997615814209

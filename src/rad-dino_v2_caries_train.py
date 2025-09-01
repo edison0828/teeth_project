@@ -1,13 +1,9 @@
-from calendar import c
 import os
-from regex import T
-from sympy import true
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
-from torchvision import models, transforms
-from torchvision.models import ResNet50_Weights
+from torchvision import transforms
 from PIL import Image
 import pandas as pd
 import numpy as np
@@ -18,7 +14,12 @@ import random
 import torchvision.transforms.functional as TF
 import csv
 
+# 由 Hugging Face 載入 rad-dino 預訓練權重
+from transformers import ViTModel
+
+# -------------------------------
 # Focal Loss 定義
+# -------------------------------
 
 
 class FocalLoss(nn.Module):
@@ -40,7 +41,9 @@ class FocalLoss(nn.Module):
             loss = loss * weight.gather(0, targets).unsqueeze(1)
         return loss.mean() if self.reduction == 'mean' else loss.sum()
 
-# 資料增強方法
+# -------------------------------
+# 資料增強方法與 Dataset 定義
+# -------------------------------
 
 
 class ToothDataset(Dataset):
@@ -49,7 +52,6 @@ class ToothDataset(Dataset):
         if isinstance(data_source, str):
             self.data = pd.read_csv(data_source)
         else:
-            # 假設是 DataFrame
             self.data = data_source
 
         self.root_dir = root_dir
@@ -79,16 +81,16 @@ class ToothDataset(Dataset):
         img_path = os.path.join(self.root_dir, self.data.iloc[idx, 0])
         image = Image.open(img_path).convert("RGB")
         label = int(self.data.iloc[idx, 1])
-        # if label == self.minority_class:
-        #     image = transforms.Resize((224, 224))(image)
-        #     image = random.choice(self.augment_method_10(image))
         if self.transform:
-            image = transforms.Resize((224, 224))(image)
+            # 將 Resize 大小改為 (518, 518) 以符合 rad-dino 的需求
+            image = transforms.Resize((518, 518))(image)
             image = random.choice(self.augment_method_10(image))
             image = self.transform(image)
         return image, label
 
-# 調整類別比例
+# -------------------------------
+# 調整類別比例: undersample 多數類
+# -------------------------------
 
 
 def balance_dataset(data, minority_class=1, ratio=10):
@@ -103,23 +105,46 @@ def balance_dataset(data, minority_class=1, ratio=10):
         frac=1, random_state=42).reset_index(drop=True)
     return balanced_data
 
-# 訓練模型函式(加入EarlyStopping與實驗記錄)
+# -------------------------------
+# 定義 Rad-DINO + 自訂分類頭 模型
+# -------------------------------
+
+
+class RadDINOClassifier(nn.Module):
+    def __init__(self, vit, classifier):
+        super(RadDINOClassifier, self).__init__()
+        self.vit = vit
+        self.classifier = classifier
+
+    def forward(self, x):
+        outputs = self.vit(x)
+        # 取第一個 token 作為 [CLS] token
+        cls_token = outputs.last_hidden_state[:, 0]
+        logits = self.classifier(cls_token)
+        return logits
+
+# -------------------------------
+# 訓練模型函式 (包含 Early Stopping 與實驗記錄)
+# -------------------------------
 
 
 def train_model(csv_train, csv_val, img_dir_train, img_dir_valid, model_save_path,
-                minority_class=1, epochs=50, patience=10, experiment_log="experiment_log.csv", tensorboard_log="runs/resnet50_Impacted_root_unfreeze2_layers_undersample_1_5"):
+                minority_class=1, epochs=50, patience=10, experiment_log="experiment_log.csv", tensorboard_log="runs/rad_dino_classifier"):
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # 讀取一張範例影像檢查通道數（因為 rad-dino 要求 RGB 輸入）
+    sample_img = Image.open(os.path.join(
+        img_dir_train, os.listdir(img_dir_train)[0])).convert("RGB")
+    normalize = transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+    # 由於在 Dataset 中已進行 Resize 到 (518,518)，這裡 transform 只做 ToTensor 與 normalization
     transform = transforms.Compose([
-        transforms.Resize((224, 224)),
         transforms.ToTensor(),
-        transforms.Normalize([0.5], [0.5]) if transforms.ToTensor()(Image.open(os.path.join(img_dir_train, os.listdir(img_dir_train)[0])).convert("RGB")).shape[0] == 1
-        else transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+        normalize
     ])
 
-    train_data = balance_dataset(pd.read_csv(csv_train), minority_class, 1)
-    # val_data = pd.read_csv(csv_val)
-    val_data = balance_dataset(pd.read_csv(csv_val), minority_class, 1)
+    train_data = balance_dataset(pd.read_csv(csv_train), minority_class)
+    val_data = balance_dataset(pd.read_csv(csv_val), minority_class)
 
     train_dataset = ToothDataset(
         train_data, img_dir_train, transform, minority_class)
@@ -136,82 +161,45 @@ def train_model(csv_train, csv_val, img_dir_train, img_dir_valid, model_save_pat
     train_loader = DataLoader(train_dataset, batch_size=32, sampler=sampler)
     val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
 
-    # IMAGENET 預訓練權重
-    # model = models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
+    # -------------------------------
+    # 建立 rad-dino 模型並接上分類頭
+    # -------------------------------
+    # 載入 rad-dino 預訓練的 Vision Transformer
+    vit = ViTModel.from_pretrained("microsoft/rad-dino")
+    num_ftrs = vit.config.hidden_size  # 例如 768 (依模型大小而定)
 
-    # SwAV 預訓練權重
-    # swav_model_path = "../models/cvpr21_newt_pretrained_models/cvpr21_newt_pretrained_models/pt/inat2021_swav_mini_1000_ep.pth"
-    swav_model_path = "../models/resnet50_swav_caries_seg_unfreeze_2layers_1_10.pth"
-    swav_weights = torch.load(
-        swav_model_path, map_location=device)
-    model = models.resnet50(weights=None)
-
-    # 創建新的狀態字典去除前綴
-    from collections import OrderedDict
-    new_state_dict = OrderedDict()
-
-    if "state_dict" in swav_weights:
-        state_dict = swav_weights["state_dict"]
-    else:
-        state_dict = swav_weights
-
-    for k, v in state_dict.items():
-        if k.startswith("module."):
-            name = k[7:]  # 移除 "module." 前綴
-        else:
-            name = k
-        new_state_dict[name] = v
-
-    # 使用修改後的權重載入（只嘗試一次，使用strict=False）
-    result = model.load_state_dict(new_state_dict, strict=False)
-    print(f"已忽略的參數數量: {len(result.missing_keys)}")
-    print(f"未使用的預訓練參數數量: {len(result.unexpected_keys)}")
-
-    # 定義新的 fc 層
-    num_ftrs = model.fc.in_features  # 取得原始 fc 層的輸入維度 (2048)
-    model.fc = nn.Sequential(
-        nn.Linear(num_ftrs, 2048),  # fc1
-        nn.Dropout(p=0.5),          # Dropout
-        nn.Linear(2048, 2048),      # fc2
-        nn.ReLU(),                  # ReLU
-        nn.Dropout(p=0.5),          # Dropout
-        nn.Linear(2048, 2)          # fc3 (最後分類層，輸出為 2 類)
+    classifier = nn.Sequential(
+        nn.Linear(num_ftrs, 2048),
+        nn.Dropout(p=0.5),
+        nn.Linear(2048, 2048),
+        nn.ReLU(),
+        nn.Dropout(p=0.5),
+        nn.Linear(2048, 2)
     )
 
-    for param in model.parameters():
+    model = RadDINOClassifier(vit, classifier)
+
+    # 凍結 ViT 的所有參數，只訓練分類頭 (你也可以選擇性解凍部分 ViT 的層)
+    for param in model.vit.parameters():
         param.requires_grad = False
-    for name, param in model.named_parameters():
-        if "layer4" in name or "fc" in name:
-            param.requires_grad = True
-        # if "fc" in name:
-        #     param.requires_grad = True
+    for name, param in model.classifier.named_parameters():
+        param.requires_grad = True
+
     print("\n✅ Trainable Layers:")
     for name, param in model.named_parameters():
         if param.requires_grad:
             print(f" - {name}")
 
-    # for name, param in model.named_parameters():
-    #     if "fc" in name:
-    #         param.requires_grad = True
-
     model = model.to(device)
 
-    # loss function
+    # -------------------------------
+    # 定義損失函式與優化器
+    # -------------------------------
     criterion = FocalLoss(gamma=2, weight=torch.tensor(
         class_weights, dtype=torch.float).to(device))
-    # criterion = nn.CrossEntropyLoss()
-
-    # optimizer
-    # optimizer = torch.optim.Adam(model.fc.parameters(), lr=0.001)  # 只優化分類層
-    optimizer = optim.AdamW([
-        {"params": model.layer4.parameters(), "lr": 1e-4},
-        {"params": model.fc.parameters(), "lr": 1e-3}
-    ])
-
-    # 學習率衰減
+    optimizer = optim.AdamW(model.classifier.parameters(), lr=1e-3)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
-    # 創建 TensorBoard SummaryWriter
     writer = SummaryWriter(tensorboard_log)
 
     best_accuracy = 0
@@ -220,7 +208,6 @@ def train_model(csv_train, csv_val, img_dir_train, img_dir_valid, model_save_pat
     for epoch in range(epochs):
         model.train()
         running_loss, correct, total = 0.0, 0, 0
-        epoch_labels = []
 
         with tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs} [Train]") as pbar:
             for images, labels in pbar:
@@ -235,15 +222,11 @@ def train_model(csv_train, csv_val, img_dir_train, img_dir_valid, model_save_pat
                 _, predicted = torch.max(outputs, 1)
                 correct += (predicted == labels).sum().item()
                 total += labels.size(0)
+                accuracy = correct / total
 
-                accuracy = correct / total  # 計算當前準確率
-
-                # 計算當前batch類別比例
                 unique, counts = np.unique(
                     labels.cpu().numpy(), return_counts=True)
                 batch_distribution = dict(zip(unique, counts))
-
-                # tqdm進度條顯示loss、類別比例與即時準確率
                 pbar.set_postfix(
                     loss=f"{loss.item():.4f}", acc=f"{accuracy:.4f}", batch_dist=batch_distribution)
 
@@ -253,7 +236,9 @@ def train_model(csv_train, csv_val, img_dir_train, img_dir_valid, model_save_pat
         writer.add_scalar("Loss/train", train_loss, epoch + 1)
         writer.add_scalar("Accuracy/train", train_accuracy, epoch + 1)
 
+        # -------------------------------
         # 驗證階段
+        # -------------------------------
         model.eval()
         val_loss, val_correct, val_total = 0.0, 0, 0
         with torch.no_grad():
@@ -268,9 +253,7 @@ def train_model(csv_train, csv_val, img_dir_train, img_dir_valid, model_save_pat
                     val_correct += (predicted == labels).sum().item()
                     val_total += labels.size(0)
 
-                    val_accuracy = val_correct / val_total  # 計算當前驗證準確率
-
-                    # tqdm進度條顯示loss與即時驗證準確率
+                    val_accuracy = val_correct / val_total
                     pbar.set_postfix(
                         loss=f"{loss.item():.4f}", acc=f"{val_accuracy:.4f}")
 
@@ -293,35 +276,28 @@ def train_model(csv_train, csv_val, img_dir_train, img_dir_valid, model_save_pat
 
         scheduler.step()
 
-    # 實驗紀錄到CSV
     with open(experiment_log, 'a', newline='') as log_file:
         writer_csv = csv.writer(log_file)
         writer_csv.writerow(
             [csv_train, epochs, best_accuracy, model_save_path])
 
     print(f"Training completed. Best Val Accuracy: {best_accuracy}")
-
     writer.close()
 
 
-# 取得專案根目錄的絕對路徑
+# -------------------------------
+# 設定路徑並呼叫訓練函式
+# -------------------------------
 base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
-# 建構絕對路徑
 train_csv = os.path.join(
     base_dir,
     "data",
     "dentex2023 disease.v6i.coco",
     "train",
     "binary_datasets",
-    # "Periapical_Lesion_vs_Normal",
-    # "Periapical_Lesion_annotations.csv"
     "Caries_vs_Normal",
     "Caries_annotations.csv"
-    # "Retained_dental_root_vs_Normal",
-    # "Retained_dental_root_annotations.csv"
-    # "Impacted_vs_Normal",
-    # "Impacted_annotations.csv"
 )
 
 valid_csv = os.path.join(
@@ -330,14 +306,8 @@ valid_csv = os.path.join(
     "dentex2023 disease.v6i.coco",
     "valid",
     "binary_datasets",
-    # "Periapical_Lesion_vs_Normal",
-    # "Periapical_Lesion_annotations.csv"
     "Caries_vs_Normal",
     "Caries_annotations.csv"
-    # "Retained_dental_root_vs_Normal",
-    # "Retained_dental_root_annotations.csv"
-    # "Impacted_vs_Normal",
-    # "Impacted_annotations.csv"
 )
 
 train_img_dir = os.path.join(
@@ -357,80 +327,23 @@ valid_img_dir = os.path.join(
 )
 
 model_path = os.path.join(
-    base_dir, "models", "resnet50_swav_no_scheduler_caies_seg_unfreeze_2layers.pth")
-
-# 確保模型目錄存在
+    base_dir, "models", "rad_dino_classifier_finetune.pth"
+)
 os.makedirs(os.path.dirname(model_path), exist_ok=True)
 
 tensor_board_log = os.path.join(
-    base_dir, "src", "runs", "resnet50_swav_caries_seg_unfreeze_2layers_undersample_1_1")
-
-# 使用絕對路徑呼叫訓練函數
-# train_model(
-#     csv_train=train_csv,
-#     csv_val=valid_csv,
-#     img_dir_train=train_img_dir,
-#     img_dir_valid=valid_img_dir,
-#     model_save_path=model_path,
-#     minority_class=1,
-#     epochs=200,
-#     patience=50,
-#     experiment_log="experiment_log.csv",
-#     tensorboard_log=tensor_board_log
-# )
-
-# seg train
-# train_model(
-#     csv_train="../data/dentex2023 disease.v6i.coco/train/binary_datasets/Caries_vs_Normal/Caries_annotations.csv",
-#     csv_val="../data/dentex2023 disease.v6i.coco/valid/binary_datasets/Caries_vs_Normal/Caries_annotations.csv",
-#     # img_dir_train="../data/dentex2023 disease.v6i.coco/train/rois",
-#     # img_dir_valid="../data/dentex2023 disease.v6i.coco/valid/rois",
-#     img_dir_train="../data/dentex2023 disease.v6i.coco/train/binary_datasets/Caries_vs_Normal/rois",
-#     img_dir_valid="../data/dentex2023 disease.v6i.coco/valid/binary_datasets/Caries_vs_Normal/rois",
-#     model_save_path="../models/resnet50_swav_caries_seg_unfreeze_2layers_origin_1_2.pth",
-#     minority_class=1,
-#     epochs=300,
-#     patience=20,
-#     experiment_log="experiment_log.csv",
-#     tensorboard_log="runs//resnet50_swav_caries_seg_unfreeze_2layers_origin_1_2"
-# )
+    base_dir, "src", "runs", "rad_dino_classifier"
+)
 
 train_model(
-    csv_train="../data/dentex2023 disease.v6i.coco/train/binary_datasets/patches_bbox_train/Caries_annotations.csv",
-    csv_val="../data/dentex2023 disease.v6i.coco/valid/binary_datasets/patches_bbox_valid/Caries_annotations.csv",
-    # img_dir_train="../data/dentex2023 disease.v6i.coco/train/rois",
-    # img_dir_valid="../data/dentex2023 disease.v6i.coco/valid/rois",
-    img_dir_train="../data/dentex2023 disease.v6i.coco/train/binary_datasets/patches_bbox_train/all",
-    img_dir_valid="../data/dentex2023 disease.v6i.coco/valid/binary_datasets/patches_bbox_valid/all",
-    model_save_path="../models/resnet50_swav_caries_seg_unfreeze_2layers_origin_box_1_1.pth",
+    csv_train=train_csv,
+    csv_val=valid_csv,
+    img_dir_train=train_img_dir,
+    img_dir_valid=valid_img_dir,
+    model_save_path=model_path,
     minority_class=1,
     epochs=300,
     patience=20,
     experiment_log="experiment_log.csv",
-    tensorboard_log="runs//resnet50_swav_caries_seg_unfreeze_2layers_origin_box_1_1"
+    tensorboard_log=tensor_board_log
 )
-# # bbox train
-# train_model(
-#     csv_train="../data/dentex2023 disease.v6i.coco/train/roi_bbox/binary_datasets/Caries_vs_Normal/Caries_annotations.csv",
-#     csv_val="../data/dentex2023 disease.v6i.coco/valid/roi_bbox/binary_datasets/Caries_vs_Normal/Caries_annotations.csv",
-#     img_dir_train="../data/dentex2023 disease.v6i.coco/train/roi_bbox/rois",
-#     img_dir_valid="../data/dentex2023 disease.v6i.coco/valid/roi_bbox/rois",
-#     model_save_path="../models/resnet50_swav_caries_bbox_unfreeze_1layers.pth",
-#     minority_class=1,
-#     epochs=300,
-#     patience=50,
-#     experiment_log="experiment_log.csv",
-#     tensorboard_log="runs/resnet50_swav_caries_bbox_unfreeze_1layers"
-# )
-
-# train_model(
-#     csv_train="../data/dentex2023 disease.v6i.coco/train/binary_datasets/Retained_dental_root_vs_Normal/Retained_dental_root_annotations.csv",
-#     csv_val="../data/dentex2023 disease.v6i.coco/val/binary_datasets/Retained_dental_root_vs_Normal/Retained_dental_root_annotations.csv",
-#     img_dir_train=train_img_dir,
-#     img_dir_valid=valid_img_dir,
-#     model_save_path=model_path,
-#     minority_class=1,
-#     epochs=200,
-#     patience=20,
-#     experiment_log="experiment_log.csv"
-# )
