@@ -12,6 +12,13 @@ models/*
 src/runs/*
 .DS_Store
 
+# Node / frontend artifacts
+frontend/node_modules/
+frontend/.next/
+frontend/.turbo/
+frontend/out/
+frontend/.vercel/
+
 # Python cache
 __pycache__/
 *.pyc
