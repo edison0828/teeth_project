@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
@@ -616,12 +616,12 @@ async def login(
     return schemas.Token(access_token=access_token, token_type="bearer", expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60)
 
 
-@app.post("/api/auth/logout", status_code=204)
+@app.post("/api/auth/logout", status_code=204, response_class=Response)
 async def logout(
     current_user: User = Depends(get_current_active_user),
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_session),
-) -> None:
+) -> Response:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except JWTError as exc:  # pragma: no cover
@@ -633,6 +633,8 @@ async def logout(
     session_record.revoked_at = datetime.utcnow()
     db.add(session_record)
     db.commit()
+
+    return Response(status_code=204)
 
 
 @app.get("/api/auth/me", response_model=schemas.UserPublic)
@@ -672,18 +674,19 @@ async def update_profile(
     )
 
 
-@app.post("/api/auth/change-password", status_code=204)
+@app.post("/api/auth/change-password", status_code=204, response_class=Response)
 async def change_password(
     payload: schemas.ChangePassword,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_session),
-) -> None:
+) -> Response:
     if not _verify_password(payload.current_password, current_user.hashed_password):
         raise HTTPException(status_code=400, detail="目前密碼不正確")
     current_user.hashed_password = _hash_password(payload.new_password)
     db.add(current_user)
     db.commit()
 
+    return Response(status_code=204)
 
 # ---------------------------------------------------------------------------
 # API endpoints
@@ -1022,6 +1025,7 @@ async def list_analyses(
     analyses = db.scalars(stmt).all()
     analyses_sorted = sorted(analyses, key=lambda a: a.triggered_at, reverse=True)
     return [_analysis_summary(analysis) for analysis in analyses_sorted]
+
 
 
 

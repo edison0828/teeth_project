@@ -2,19 +2,53 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { clsx } from "clsx";
 
-const navigation = [
-  { label: "Recent Patients", href: "/", badge: 3 },
-  { label: "Pending Images", href: "/image-upload", badge: 2 },
-  { label: "Pending Analyses", href: "/analysis/AN-901" },
-  { label: "Patient Detail", href: "/patients" },
-  { label: "Notifications", href: "#notifications" },
-  { label: "Report Review", href: "#reports" }
-];
+import { useAuth } from "../contexts/AuthContext";
+import { fetchDashboardOverview } from "../lib/api";
+import { getSidebarNavItems, type NavigationMetrics } from "../lib/navigation";
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const { token } = useAuth();
+  const [metrics, setMetrics] = useState<NavigationMetrics>({});
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadMetrics() {
+      if (!token) {
+        setMetrics({});
+        return;
+      }
+
+      try {
+        const overview = await fetchDashboardOverview(token);
+        if (cancelled) {
+          return;
+        }
+        setMetrics({
+          pendingImages: overview.system_status.pending_images,
+          reportsReady: overview.system_status.new_reports,
+          recentPatients: overview.recent_patients.length,
+        });
+      } catch (error) {
+        if (!cancelled) {
+          setMetrics({});
+        }
+        console.warn("Unable to load navigation metrics", error);
+      }
+    }
+
+    loadMetrics();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  const navigation = useMemo(() => getSidebarNavItems(metrics), [metrics]);
 
   return (
     <aside className="hidden min-h-screen w-64 flex-col border-r border-white/5 bg-[#050B1C]/80 p-6 backdrop-blur xl:flex">
@@ -42,7 +76,7 @@ export default function Sidebar() {
               )}
             >
               <span>{item.label}</span>
-              {item.badge ? (
+              {typeof item.badge === "number" && item.badge > 0 ? (
                 <span className="rounded-full bg-primary/30 px-2 py-0.5 text-xs text-primary-subtle">
                   {item.badge}
                 </span>

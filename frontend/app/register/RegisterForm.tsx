@@ -1,20 +1,28 @@
-'use client';
+"use client";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 import { loginUser, registerUser } from "../../lib/api";
 import { persistToken } from "../../lib/auth-storage";
+import { useAuth } from "../../contexts/AuthContext";
 
 export default function RegisterForm() {
   const router = useRouter();
+  const { refresh, token: activeToken, loading: authLoading } = useAuth();
   const [email, setEmail] = useState<string>("");
   const [fullName, setFullName] = useState<string>("");
   const [password, setPassword] = useState<string>("");
   const [confirmPassword, setConfirmPassword] = useState<string>("");
   const [status, setStatus] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!authLoading && activeToken) {
+      router.replace("/");
+    }
+  }, [authLoading, activeToken, router]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -35,8 +43,9 @@ export default function RegisterForm() {
       await registerUser({ email: email.trim(), password, full_name: fullName || undefined });
       const token = await loginUser(email.trim(), password);
       persistToken(token.access_token, token.expires_in);
+      await refresh();
       setStatus("註冊成功，帳號已自動登入");
-      router.replace("/account");
+      router.replace("/");
     } catch (error) {
       const message = error instanceof Error ? error.message : "註冊失敗";
       setStatus(message);

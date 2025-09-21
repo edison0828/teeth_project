@@ -1,10 +1,17 @@
 import Link from "next/link";
 import ProgressCircle from "../components/ProgressCircle";
+import { readServerToken } from "../lib/server-auth";
 import StatCard from "../components/StatCard";
 import { fetchDashboardOverview } from "../lib/api";
 
 export default async function DashboardPage() {
-  const overview = await fetchDashboardOverview();
+  const token = readServerToken();
+
+  if (!token) {
+    return null;
+  }
+
+  const overview = await fetchDashboardOverview(token);
 
   return (
     <div className="flex flex-col gap-8">

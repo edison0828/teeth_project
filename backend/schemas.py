@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import List, Optional
+from typing import List, Optional, Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
 
 
 class QuickAction(BaseModel):
@@ -99,7 +99,7 @@ class UserPublic(UserBase):
 
 class Token(BaseModel):
     access_token: str
-    token_type: str = Field('bearer', const=True)
+    token_type: Literal['bearer'] = 'bearer'
     expires_in: int
 
 
@@ -176,6 +176,7 @@ class FindingRegion(BaseModel):
 
 
 class AnalysisFinding(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
     finding_id: str
     type: str
     tooth_label: Optional[str] = None
@@ -225,3 +226,4 @@ class AnalysisProgress(BaseModel):
 
 class AnalysisDetailExtended(AnalysisDetailResponse):
     progress: AnalysisProgress
+

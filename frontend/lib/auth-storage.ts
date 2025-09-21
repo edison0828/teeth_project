@@ -1,4 +1,4 @@
-const STORAGE_KEY = "oral-xray-auth";
+import { AUTH_COOKIE_KEY, AUTH_STORAGE_KEY } from "./auth-keys";
 
 type StoredToken = {
   accessToken: string;
@@ -6,7 +6,38 @@ type StoredToken = {
 };
 
 function isBrowser(): boolean {
-  return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+  return typeof window !== "undefined" && typeof window.document !== "undefined";
+}
+
+function persistCookie(accessToken: string, expiresInSeconds: number): void {
+  if (!isBrowser()) {
+    return;
+  }
+
+  const maxAge = Math.max(1, Math.floor(expiresInSeconds));
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `${AUTH_COOKIE_KEY}=${encodeURIComponent(accessToken)}; Path=/; Max-Age=${maxAge}; SameSite=Lax${secure}`;
+}
+
+function readCookie(): string | null {
+  if (!isBrowser()) {
+    return null;
+  }
+
+  const cookies = document.cookie ? document.cookie.split(/;\s*/) : [];
+  for (const entry of cookies) {
+    if (entry.startsWith(`${AUTH_COOKIE_KEY}=`)) {
+      return decodeURIComponent(entry.substring(AUTH_COOKIE_KEY.length + 1));
+    }
+  }
+  return null;
+}
+
+function clearCookie(): void {
+  if (!isBrowser()) {
+    return;
+  }
+  document.cookie = `${AUTH_COOKIE_KEY}=; Path=/; Max-Age=0; SameSite=Lax`;
 }
 
 export function persistToken(accessToken: string, expiresInSeconds: number): void {
@@ -16,7 +47,8 @@ export function persistToken(accessToken: string, expiresInSeconds: number): voi
 
   const expiresAt = Date.now() + expiresInSeconds * 1000;
   const payload: StoredToken = { accessToken, expiresAt };
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(payload));
+  persistCookie(accessToken, expiresInSeconds);
 }
 
 export function readToken(): string | null {
@@ -24,27 +56,29 @@ export function readToken(): string | null {
     return null;
   }
 
-  const raw = window.localStorage.getItem(STORAGE_KEY);
-  if (!raw) {
-    return null;
+  const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+  if (raw) {
+    try {
+      const payload = JSON.parse(raw) as StoredToken;
+      if (Date.now() > payload.expiresAt) {
+        window.localStorage.removeItem(AUTH_STORAGE_KEY);
+        clearCookie();
+      } else {
+        return payload.accessToken;
+      }
+    } catch (error) {
+      window.localStorage.removeItem(AUTH_STORAGE_KEY);
+      clearCookie();
+    }
   }
 
-  try {
-    const payload = JSON.parse(raw) as StoredToken;
-    if (Date.now() > payload.expiresAt) {
-      window.localStorage.removeItem(STORAGE_KEY);
-      return null;
-    }
-    return payload.accessToken;
-  } catch (error) {
-    window.localStorage.removeItem(STORAGE_KEY);
-    return null;
-  }
+  return readCookie();
 }
 
 export function clearToken(): void {
   if (!isBrowser()) {
     return;
   }
-  window.localStorage.removeItem(STORAGE_KEY);
+  window.localStorage.removeItem(AUTH_STORAGE_KEY);
+  clearCookie();
 }

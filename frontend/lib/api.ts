@@ -1,6 +1,7 @@
-import { fallbackAnalysis, fallbackDashboard, fallbackPatientDetail, fallbackPatients } from "./mock-data";
+import { fallbackAnalysis, fallbackAnalysesSummary, fallbackDashboard, fallbackPatientDetail, fallbackPatients } from "./mock-data";
 import type {
   AnalysisDetail,
+  AnalysisSummary,
   ChangePasswordRequest,
   DashboardOverview,
   ImageUploadResponse,
@@ -14,14 +15,20 @@ import type {
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
-async function fetchJson<T>(path: string, fallback: T): Promise<T> {
+async function fetchJson<T>(path: string, fallback: T, token?: string): Promise<T> {
   try {
+    const headers: HeadersInit = token
+      ? {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        }
+      : {
+          "Content-Type": "application/json"
+        };
+
     const response = await fetch(`${API_BASE_URL}${path}`, {
       cache: "no-store",
-    headers,
-      headers: {
-        "Content-Type": "application/json"
-      }
+      headers
     });
 
     if (!response.ok) {
@@ -35,21 +42,26 @@ async function fetchJson<T>(path: string, fallback: T): Promise<T> {
   }
 }
 
-export async function fetchDashboardOverview(): Promise<DashboardOverview> {
-  return fetchJson<DashboardOverview>("/api/dashboard/overview", fallbackDashboard);
+export async function fetchDashboardOverview(token?: string): Promise<DashboardOverview> {
+  return fetchJson<DashboardOverview>("/api/dashboard/overview", fallbackDashboard, token);
 }
 
-export async function fetchPatients(search?: string): Promise<PatientListResponse> {
+export async function fetchPatients(search?: string, token?: string): Promise<PatientListResponse> {
   const query = search ? `?search=${encodeURIComponent(search)}` : "";
-  return fetchJson<PatientListResponse>(`/api/patients${query}`, fallbackPatients);
+  return fetchJson<PatientListResponse>(`/api/patients${query}`, fallbackPatients, token);
 }
 
-export async function fetchPatientDetail(patientId: string): Promise<PatientDetail> {
-  return fetchJson<PatientDetail>(`/api/patients/${patientId}`, fallbackPatientDetail);
+export async function fetchPatientDetail(patientId: string, token?: string): Promise<PatientDetail> {
+  return fetchJson<PatientDetail>(`/api/patients/${patientId}`, fallbackPatientDetail, token);
 }
 
-export async function fetchAnalysisDetail(analysisId: string): Promise<AnalysisDetail> {
-  return fetchJson<AnalysisDetail>(`/api/analyses/${analysisId}`, fallbackAnalysis);
+export async function fetchAnalysisDetail(analysisId: string, token?: string): Promise<AnalysisDetail> {
+  return fetchJson<AnalysisDetail>(`/api/analyses/${analysisId}`, fallbackAnalysis, token);
+}
+
+export async function fetchAnalyses(token?: string, status?: string): Promise<AnalysisSummary[]> {
+  const query = status ? `?status=${encodeURIComponent(status)}` : "";
+  return fetchJson<AnalysisSummary[]>(`/api/analyses${query}`, fallbackAnalysesSummary, token);
 }
 
 export async function uploadImage(formData: FormData, token?: string): Promise<ImageUploadResponse> {
@@ -69,7 +81,6 @@ export async function uploadImage(formData: FormData, token?: string): Promise<I
 
   return (await response.json()) as ImageUploadResponse;
 }
-
 
 async function extractErrorMessage(response: Response): Promise<string> {
   try {

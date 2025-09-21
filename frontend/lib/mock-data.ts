@@ -1,4 +1,6 @@
-import { type AnalysisDetail, type DashboardOverview, type PatientDetail, type PatientListResponse } from "./types";
+import { type AnalysisDetail, type AnalysisSummary, type DashboardOverview, type PatientDetail, type PatientListResponse } from "./types";
+
+const nowIso = new Date().toISOString();
 
 export const fallbackDashboard: DashboardOverview = {
   quick_actions: [
@@ -19,7 +21,7 @@ export const fallbackDashboard: DashboardOverview = {
     pending_images: 2,
     new_reports: 3,
     models_active: 4,
-    last_synced: new Date().toISOString()
+    last_synced: nowIso
   },
   statistics: {
     weekly_volume: 38,
@@ -60,6 +62,12 @@ export const fallbackDashboard: DashboardOverview = {
       name: "John Smith",
       last_visit: "2023-09-14",
       most_recent_study: "Bitewing"
+    },
+    {
+      id: "P84021",
+      name: "Amy Chen",
+      last_visit: "2023-08-22",
+      most_recent_study: "CBCT"
     }
   ],
   pending_images: [
@@ -68,8 +76,16 @@ export const fallbackDashboard: DashboardOverview = {
       patient_id: "P72631",
       patient_name: "John Smith",
       image_type: "Bitewing",
-      submitted_at: new Date().toISOString(),
+      submitted_at: nowIso,
       status: "queued"
+    },
+    {
+      id: "IMG-945",
+      patient_id: "P84021",
+      patient_name: "Amy Chen",
+      image_type: "CBCT",
+      submitted_at: nowIso,
+      status: "processing"
     }
   ]
 };
@@ -95,7 +111,7 @@ export const fallbackPatientDetail: PatientDetail = {
       id: "IMG-001",
       patient_id: "P12345",
       type: "Panoramic",
-      captured_at: new Date().toISOString(),
+      captured_at: nowIso,
       status: "analyzed",
       storage_uri: "s3://oral-xray/panoramic/P12345_20231030.png"
     }
@@ -106,20 +122,50 @@ export const fallbackPatientDetail: PatientDetail = {
       image_id: "IMG-001",
       requested_by: "Dr. Lee",
       status: "completed",
-      triggered_at: new Date().toISOString(),
-      completed_at: new Date().toISOString(),
+      triggered_at: nowIso,
+      completed_at: nowIso,
       overall_assessment: "Found 2 caries, 1 periodontal lesion"
     }
   ]
 };
+
+export const fallbackAnalysesSummary: AnalysisSummary[] = [
+  {
+    id: "AN-901",
+    image_id: "IMG-001",
+    requested_by: "Dr. Lee",
+    status: "completed",
+    triggered_at: nowIso,
+    completed_at: nowIso,
+    overall_assessment: "Found 2 caries, 1 periodontal lesion"
+  },
+  {
+    id: "AN-902",
+    image_id: "IMG-902",
+    requested_by: "Dr. Wu",
+    status: "processing",
+    triggered_at: nowIso,
+    completed_at: null,
+    overall_assessment: null
+  },
+  {
+    id: "AN-903",
+    image_id: "IMG-945",
+    requested_by: "Dr. Chen",
+    status: "queued",
+    triggered_at: nowIso,
+    completed_at: null,
+    overall_assessment: null
+  }
+];
 
 export const fallbackAnalysis: AnalysisDetail = {
   id: "AN-901",
   image_id: "IMG-001",
   requested_by: "Dr. Lee",
   status: "completed",
-  triggered_at: new Date().toISOString(),
-  completed_at: new Date().toISOString(),
+  triggered_at: nowIso,
+  completed_at: nowIso,
   overall_assessment: "Found 2 caries, 1 periodontal lesion.",
   patient: fallbackPatientDetail,
   image: fallbackPatientDetail.recent_images[0],
@@ -137,6 +183,18 @@ export const fallbackAnalysis: AnalysisDetail = {
       extra: { distance_to_pulp: 1.4 },
       note: "Verify lesion depth",
       confirmed: true
+    },
+    {
+      finding_id: "FND-2",
+      type: "periodontal",
+      tooth_label: "FDI-16",
+      region: { bbox: [120, 220, 64, 54] },
+      severity: "mild",
+      confidence: 0.74,
+      model_key: "perio_segmenter",
+      model_version: "v0.9.1",
+      extra: {},
+      confirmed: false
     }
   ],
   report_actions: [
@@ -147,16 +205,22 @@ export const fallbackAnalysis: AnalysisDetail = {
     overall_confidence: 0.82,
     steps: [
       {
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso,
         title: "Upload received",
         description: "Image queued for preprocessing",
         status: "done"
       },
       {
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso,
         title: "AI models",
         description: "Running detectors",
         status: "done"
+      },
+      {
+        timestamp: nowIso,
+        title: "Awaiting review",
+        description: "Assigned to Dr. Lee for confirmation",
+        status: "in-progress"
       }
     ]
   }

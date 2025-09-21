@@ -1,23 +1,16 @@
-'use client';
+"use client";
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 
-import {
-  changePassword,
-  fetchCurrentUser,
-  logoutUser,
-  updateProfile
-} from "../../lib/api";
-import { clearToken, readToken } from "../../lib/auth-storage";
-import type { UserProfile } from "../../lib/types";
+import { changePassword, updateProfile } from "../../lib/api";
+import { useAuth } from "../../contexts/AuthContext";
 
 export default function AccountPanel() {
   const router = useRouter();
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const { user, token, loading: authLoading, refresh, setUser, logout } = useAuth();
   const [message, setMessage] = useState<string>("");
   const [passwordMessage, setPasswordMessage] = useState<string>("");
-  const [loading, setLoading] = useState<boolean>(true);
   const [updating, setUpdating] = useState<boolean>(false);
   const [changing, setChanging] = useState<boolean>(false);
   const [fullName, setFullName] = useState<string>("");
@@ -27,33 +20,21 @@ export default function AccountPanel() {
   const [confirmPassword, setConfirmPassword] = useState<string>("");
 
   useEffect(() => {
-    const token = readToken();
-    if (!token) {
+    if (!authLoading && !token) {
       router.replace("/login");
-      return;
     }
+  }, [authLoading, token, router]);
 
-    fetchCurrentUser(token)
-      .then((user) => {
-        setProfile(user);
-        setFullName(user.full_name ?? "");
-        setEmail(user.email);
-      })
-      .catch((error) => {
-        clearToken();
-        const message = error instanceof Error ? error.message : "讀取帳號資料失敗";
-        setMessage(message);
-        router.replace("/login");
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  }, [router]);
+  useEffect(() => {
+    if (user) {
+      setFullName(user.full_name ?? "");
+      setEmail(user.email);
+    }
+  }, [user]);
 
   const handleProfileSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const token = readToken();
-    if (!token || !profile) {
+    if (!token) {
       router.replace("/login");
       return;
     }
@@ -61,8 +42,11 @@ export default function AccountPanel() {
     setMessage("");
     setUpdating(true);
     try {
-      const updated = await updateProfile(token, { email: email.trim(), full_name: fullName.trim() || undefined });
-      setProfile(updated);
+      const updated = await updateProfile(token, {
+        email: email.trim(),
+        full_name: fullName.trim() || undefined
+      });
+      setUser(updated);
       setMessage("資料已更新");
     } catch (error) {
       const msg = error instanceof Error ? error.message : "更新失敗";
@@ -74,7 +58,6 @@ export default function AccountPanel() {
 
   const handlePasswordSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const token = readToken();
     if (!token) {
       router.replace("/login");
       return;
@@ -102,23 +85,14 @@ export default function AccountPanel() {
   };
 
   const handleLogout = async () => {
-    const token = readToken();
-    if (token) {
-      try {
-        await logoutUser(token);
-      } catch (error) {
-        console.warn("Logout warning", error);
-      }
-    }
-    clearToken();
-    router.replace("/login");
+    await logout();
   };
 
-  if (loading) {
+  if (authLoading) {
     return <p className="mt-16 text-center text-sm text-slate-300">載入帳號資料中...</p>;
   }
 
-  if (!profile) {
+  if (!user) {
     return null;
   }
 

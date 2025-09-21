@@ -1,4 +1,4 @@
-﻿export interface SeveritySlice {
+export interface SeveritySlice {
   level: string;
   percentage: number;
 }
@@ -143,5 +143,33 @@ export interface AnalysisDetail extends AnalysisSummary {
   };
 }
 
+export interface UserProfile {
+  id: string;
+  email: string;
+  full_name?: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
 
+export interface UserCreateRequest {
+  email: string;
+  password: string;
+  full_name?: string;
+}
 
+export interface UserUpdateRequest {
+  email?: string;
+  full_name?: string;
+}
+
+export interface ChangePasswordRequest {
+  current_password: string;
+  new_password: string;
+}
+
+export interface TokenResponse {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+}

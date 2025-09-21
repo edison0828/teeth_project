@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import Sidebar from "../components/Sidebar";
-import TopNav from "../components/TopNav";
+import AppShell from "../components/AppShell";
+import { AuthProvider } from "../contexts/AuthContext";
 
 export const metadata: Metadata = {
   title: "DentaMind AI Platform",
@@ -15,12 +15,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="flex bg-gradient-to-br from-[#020617] via-[#071026] to-[#0B1531]">
-        <Sidebar />
-        <div className="flex min-h-screen flex-1 flex-col">
-          <TopNav />
-          <main className="flex-1 overflow-y-auto p-8 lg:p-10 xl:p-12">{children}</main>
-        </div>
+      <body className="min-h-screen bg-gradient-to-br from-[#020617] via-[#071026] to-[#0B1531]">
+        <AuthProvider>
+          <AppShell>{children}</AppShell>
+        </AuthProvider>
       </body>
     </html>
   );

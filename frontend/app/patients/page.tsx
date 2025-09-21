@@ -1,10 +1,17 @@
 import Link from "next/link";
 import { fetchPatientDetail, fetchPatients } from "../../lib/api";
+import { readServerToken } from "../../lib/server-auth";
 
 export default async function PatientsPage() {
-  const patients = await fetchPatients();
+  const token = readServerToken();
+
+  if (!token) {
+    return null;
+  }
+
+  const patients = await fetchPatients(undefined, token);
   const selectedPatientId = patients.items[0]?.id;
-  const patientDetail = selectedPatientId ? await fetchPatientDetail(selectedPatientId) : null;
+  const patientDetail = selectedPatientId ? await fetchPatientDetail(selectedPatientId, token) : null;
 
   return (
     <div className="grid gap-8 xl:grid-cols-[1.2fr,1fr]">

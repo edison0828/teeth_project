@@ -1,25 +1,26 @@
-'use client';
+"use client";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 
 import { loginUser } from "../../lib/api";
-import { persistToken, readToken } from "../../lib/auth-storage";
+import { persistToken } from "../../lib/auth-storage";
+import { useAuth } from "../../contexts/AuthContext";
 
 export default function LoginForm() {
   const router = useRouter();
+  const { refresh, token: activeToken, loading: authLoading } = useAuth();
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
   const [status, setStatus] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
 
   useEffect(() => {
-    const token = readToken();
-    if (token) {
-      router.replace("/account");
+    if (!authLoading && activeToken) {
+      router.replace("/");
     }
-  }, [router]);
+  }, [authLoading, activeToken, router]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -34,8 +35,9 @@ export default function LoginForm() {
     try {
       const token = await loginUser(email.trim(), password);
       persistToken(token.access_token, token.expires_in);
+      await refresh();
       setStatus("登入成功，稍後自動導向");
-      router.replace("/account");
+      router.replace("/");
     } catch (error) {
       const message = error instanceof Error ? error.message : "登入失敗";
       setStatus(message);

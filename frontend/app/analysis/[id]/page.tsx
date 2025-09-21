@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { fetchAnalysisDetail } from "../../../lib/api";
+import { readServerToken } from "../../../lib/server-auth";
 
 interface AnalysisPageProps {
   params: { id: string };
@@ -7,7 +8,13 @@ interface AnalysisPageProps {
 
 export default async function AnalysisPage({ params }: AnalysisPageProps) {
   const { id } = params;
-  const analysis = await fetchAnalysisDetail(id);
+  const token = readServerToken();
+
+  if (!token) {
+    return null;
+  }
+
+  const analysis = await fetchAnalysisDetail(id, token);
 
   if (!analysis) {
     notFound();
