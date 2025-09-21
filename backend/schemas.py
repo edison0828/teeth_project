@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 
 class QuickAction(BaseModel):
@@ -69,6 +69,38 @@ class DashboardOverview(BaseModel):
     detected_conditions: List[ConditionSummary]
     recent_patients: List[PatientSummary]
     pending_images: List[ImageQueueItem]
+
+
+class UserBase(BaseModel):
+    email: EmailStr
+    full_name: Optional[str] = None
+
+
+class UserCreate(UserBase):
+    password: str = Field(..., min_length=8, max_length=128)
+
+
+class UserUpdate(BaseModel):
+    email: Optional[EmailStr] = None
+    full_name: Optional[str] = None
+
+
+class ChangePassword(BaseModel):
+    current_password: str = Field(..., min_length=8, max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
+class UserPublic(UserBase):
+    id: str
+    is_active: bool = True
+    created_at: datetime
+    updated_at: datetime
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = Field('bearer', const=True)
+    expires_in: int
 
 
 class PatientBase(BaseModel):

@@ -3,6 +3,7 @@
 import { ChangeEvent, DragEvent, FormEvent, useMemo, useRef, useState } from "react";
 
 import { uploadImage } from "../../lib/api";
+import { readToken } from "../../lib/auth-storage";
 import type { ImageUploadResponse, PatientSummary } from "../../lib/types";
 
 type UploadState =
@@ -90,6 +91,12 @@ export default function UploadForm({ patients }: UploadFormProps) {
       return;
     }
 
+    const token = readToken();
+    if (!token) {
+      setStatus({ state: "error", message: "請先登入後再上傳影像。" });
+      return;
+    }
+
     const capturedValue = capturedAt.length === 16 ? `${capturedAt}:00` : capturedAt;
 
     const formData = new FormData();
@@ -105,7 +112,7 @@ export default function UploadForm({ patients }: UploadFormProps) {
 
     setStatus({ state: "uploading" });
     try {
-      const response = await uploadImage(formData);
+      const response = await uploadImage(formData, token);
       setStatus({ state: "success", payload: response });
       setFile(null);
       setNotes("");

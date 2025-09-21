@@ -1,13 +1,17 @@
-﻿"""FastAPI application serving Oral X-Ray analytics endpoints."""
+"""FastAPI application serving Oral X-Ray analytics endpoints."""
 from __future__ import annotations
 
+import os
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from jose import JWTError, jwt
+from passlib.context import CryptContext
 from sqlalchemy import distinct, func, or_, select
 from sqlalchemy.orm import Session
 
@@ -16,6 +20,8 @@ from .database import (
     Analysis,
     Finding,
     ImageStudy,
+    User,
+    UserSession,
     Patient,
     SessionLocal,
     get_session,
@@ -25,7 +31,15 @@ from .database import (
 
 UPLOAD_ROOT = Path(__file__).resolve().parent.parent / "uploaded_images"
 
-app = FastAPI(title="Oral X-Ray Intelligence API", version="0.2.0")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+SESSION_EXPIRE_DAYS = int(os.getenv("SESSION_EXPIRE_DAYS", "7"))
+SECRET_KEY = os.getenv("SECRET_KEY", "please-change-me")
+ALGORITHM = "HS256"
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+app = FastAPI(title="Oral X-Ray Intelligence API", version="0.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -34,6 +48,78 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ---------------------------------------------------------------------------
+# Security helpers
+# ---------------------------------------------------------------------------
+
+def _verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+def _hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+def _create_access_token(*, subject: str, session_id: str, expires_delta: Optional[timedelta] = None) -> str:
+    if expires_delta is None:
+        expires_delta = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.utcnow() + expires_delta
+    to_encode = {"sub": subject, "sid": session_id, "exp": expire}
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def _get_user_by_email(session: Session, email: str) -> Optional[User]:
+    return session.scalar(select(User).where(func.lower(User.email) == email.lower()))
+
+
+def _authenticate_user(session: Session, email: str, password: str) -> Optional[User]:
+    user = _get_user_by_email(session, email)
+    if not user or not user.is_active:
+        return None
+    if not _verify_password(password, user.hashed_password):
+        return None
+    return user
+
+
+def _get_session_or_401(session: Session, session_id: str, user_id: str) -> UserSession:
+    db_session = session.get(UserSession, session_id)
+    if (
+        db_session is None
+        or db_session.user_id != user_id
+        or db_session.revoked_at is not None
+        or db_session.expires_at < datetime.utcnow()
+    ):
+        raise HTTPException(status_code=401, detail="Session has expired or is invalid")
+    return db_session
+
+
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_session),
+) -> User:
+    credentials_exception = HTTPException(status_code=401, detail="Invalid authentication credentials")
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str | None = payload.get("sub")
+        session_id: str | None = payload.get("sid")
+        if user_id is None or session_id is None:
+            raise credentials_exception
+    except JWTError as exc:  # pragma: no cover
+        raise credentials_exception from exc
+
+    user = db.get(User, user_id)
+    if user is None or not user.is_active:
+        raise credentials_exception
+    _get_session_or_401(db, session_id, user_id)
+    return user
+
+
+async def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
+    if not current_user.is_active:
+        raise HTTPException(status_code=403, detail="User account is disabled")
+    return current_user
 
 
 @app.on_event("startup")
@@ -244,8 +330,15 @@ def _generate_image_id(session: Session) -> str:
     return _generate_identifier("IMG-", session, ImageStudy, length=3)
 
 
+
 def _generate_analysis_id(session: Session) -> str:
     return _generate_identifier("AN-", session, Analysis, length=3)
+
+
+
+def _generate_user_id(session: Session) -> str:
+    return _generate_identifier("USR-", session, User, length=6)
+
 
 
 def _patient_summary(patient: Patient) -> schemas.PatientSummary:
@@ -463,6 +556,136 @@ async def _persist_upload(file: UploadFile, destination: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Authentication endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/auth/register", response_model=schemas.UserPublic, status_code=201)
+async def register_user(
+    payload: schemas.UserCreate,
+    db: Session = Depends(get_session),
+) -> schemas.UserPublic:
+    existing = _get_user_by_email(db, payload.email)
+    if existing:
+        raise HTTPException(status_code=409, detail="電子郵件已被使用")
+
+    user = User(
+        id=_generate_user_id(db),
+        email=payload.email,
+        full_name=payload.full_name,
+        hashed_password=_hash_password(payload.password),
+        is_active=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    return schemas.UserPublic(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+    )
+
+
+@app.post("/api/auth/login", response_model=schemas.Token)
+async def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    request: Request = None,
+    db: Session = Depends(get_session),
+) -> schemas.Token:
+    user = _authenticate_user(db, form_data.username, form_data.password)
+    if user is None:
+        raise HTTPException(status_code=401, detail="帳號或密碼錯誤")
+
+    session_id = uuid4().hex
+    user_agent = request.headers.get("User-Agent") if request else None
+    session_record = UserSession(
+        id=session_id,
+        user_id=user.id,
+        created_at=datetime.utcnow(),
+        expires_at=datetime.utcnow() + timedelta(days=SESSION_EXPIRE_DAYS),
+        user_agent=user_agent,
+    )
+    db.add(session_record)
+    db.commit()
+
+    access_token = _create_access_token(subject=user.id, session_id=session_id)
+    return schemas.Token(access_token=access_token, token_type="bearer", expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60)
+
+
+@app.post("/api/auth/logout", status_code=204)
+async def logout(
+    current_user: User = Depends(get_current_active_user),
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_session),
+) -> None:
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError as exc:  # pragma: no cover
+        raise HTTPException(status_code=400, detail="無效的 token") from exc
+    session_id: str | None = payload.get("sid")
+    if session_id is None:
+        raise HTTPException(status_code=400, detail="無效的 session")
+    session_record = _get_session_or_401(db, session_id, current_user.id)
+    session_record.revoked_at = datetime.utcnow()
+    db.add(session_record)
+    db.commit()
+
+
+@app.get("/api/auth/me", response_model=schemas.UserPublic)
+async def get_profile(current_user: User = Depends(get_current_active_user)) -> schemas.UserPublic:
+    return schemas.UserPublic(
+        id=current_user.id,
+        email=current_user.email,
+        full_name=current_user.full_name,
+        is_active=current_user.is_active,
+        created_at=current_user.created_at,
+        updated_at=current_user.updated_at,
+    )
+
+
+@app.patch("/api/auth/me", response_model=schemas.UserPublic)
+async def update_profile(
+    payload: schemas.UserUpdate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_session),
+) -> schemas.UserPublic:
+    if payload.full_name is not None:
+        current_user.full_name = payload.full_name
+    if payload.email is not None and payload.email != current_user.email:
+        if _get_user_by_email(db, payload.email):
+            raise HTTPException(status_code=409, detail="電子郵件已被使用")
+        current_user.email = payload.email
+    db.add(current_user)
+    db.commit()
+    db.refresh(current_user)
+    return schemas.UserPublic(
+        id=current_user.id,
+        email=current_user.email,
+        full_name=current_user.full_name,
+        is_active=current_user.is_active,
+        created_at=current_user.created_at,
+        updated_at=current_user.updated_at,
+    )
+
+
+@app.post("/api/auth/change-password", status_code=204)
+async def change_password(
+    payload: schemas.ChangePassword,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_session),
+) -> None:
+    if not _verify_password(payload.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="目前密碼不正確")
+    current_user.hashed_password = _hash_password(payload.new_password)
+    db.add(current_user)
+    db.commit()
+
+
+# ---------------------------------------------------------------------------
 # API endpoints
 # ---------------------------------------------------------------------------
 
@@ -601,7 +824,11 @@ async def list_patients(
 
 
 @app.post("/api/patients", response_model=schemas.Patient)
-async def create_patient(payload: schemas.PatientCreate, db: Session = Depends(get_session)) -> schemas.Patient:
+async def create_patient(
+    payload: schemas.PatientCreate,
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_active_user),
+) -> schemas.Patient:
     patient_id = _generate_patient_id(db)
     patient = Patient(
         id=patient_id,
@@ -672,7 +899,11 @@ async def get_patient_analyses(patient_id: str, db: Session = Depends(get_sessio
 
 
 @app.post("/api/images", response_model=schemas.ImageUploadResponse)
-async def create_image(payload: schemas.ImageCreate, db: Session = Depends(get_session)) -> schemas.ImageUploadResponse:
+async def create_image(
+    payload: schemas.ImageCreate,
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_active_user),
+) -> schemas.ImageUploadResponse:
     patient = db.get(Patient, payload.patient_id)
     if patient is None:
         raise HTTPException(status_code=404, detail="Patient not found")
@@ -687,6 +918,7 @@ async def create_image(payload: schemas.ImageCreate, db: Session = Depends(get_s
         original_filename=None,
         notes=None,
         priority="standard",
+        requested_by=current_user.full_name or current_user.email,
     )
     db.commit()
     db.refresh(image)
@@ -712,6 +944,7 @@ async def upload_image(
     notes: str | None = Form(None),
     file: UploadFile = File(...),
     db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_active_user),
 ) -> schemas.ImageUploadResponse:
     patient = db.get(Patient, patient_id)
     if patient is None:
@@ -739,6 +972,7 @@ async def upload_image(
         notes=notes_value,
         priority=priority,
         image_id=image_id,
+        requested_by=current_user.full_name or current_user.email,
     )
     db.commit()
     db.refresh(image)
@@ -754,6 +988,7 @@ async def upload_image(
 async def create_analysis(
     payload: schemas.AnalysisCreate,
     db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_active_user),
 ) -> schemas.AnalysisDetailExtended:
     image = db.get(ImageStudy, payload.image_id)
     if image is None:
@@ -762,7 +997,7 @@ async def create_analysis(
     analysis = _enqueue_analysis(
         db,
         image=image,
-        requested_by=payload.requested_by,
+        requested_by=current_user.full_name or payload.requested_by,
         priority=payload.priority,
     )
     db.commit()

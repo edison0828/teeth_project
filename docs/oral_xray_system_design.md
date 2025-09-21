@@ -223,6 +223,32 @@ AuditLogs (id, actor_id, action, target_type, payload, created_at)
 - **AI 治療模擬**：提供 3D 模型與虛擬治療模擬結果。
 - **病徵知識庫**：建立診斷依據與病例對照，提高 AI 透明度。
 
+
+## 11. 實際部署與環境設定指引
+
+1. **資料庫準備**
+   - 建議在 PostgreSQL / MySQL / Azure SQL 建立獨立資料庫與具備 DDL 權限的帳號。
+   - 於部署主機設定環境變數 `DATABASE_URL`（範例：`postgresql+psycopg://oral_ai:StrongPass@db-host:5432/oral_ai`）。
+   - 首次啟動 FastAPI 會自動建立必要資料表；正式環境建議導入 Alembic 以版本化 schema。
+2. **後端環境變數**
+   - `SECRET_KEY`：JWT 簽章用的長字串，至少 32 bytes，正式環境勿外洩。
+   - `ACCESS_TOKEN_EXPIRE_MINUTES`：存取權杖有效時間（預設 60 分鐘）。
+   - `SESSION_EXPIRE_DAYS`：伺服器端登入工作階段保存天數（預設 7 天）。
+   - 於本地開發可在 `.env` 建立上述值並透過 `uvicorn --env-file .env backend.main:app --reload` 啟動。
+3. **檔案儲存**
+   - FastAPI 預設將影像存放至專案根目錄 `uploaded_images/`。
+   - 正式環境可改為掛載 NFS / S3 互動層：設定 `uploaded_images` 為掛載點或改寫 `_persist_upload`。
+4. **帳號管理流程**
+   - 透過 `/api/auth/register` 建立新使用者，密碼將以 bcrypt 雜湊存放。
+   - `/api/auth/login` 回傳含 `access_token` 的 JWT，並於 `UserSession` 表寫入可撤銷的 session 記錄。
+   - `/api/auth/logout` 與 `/api/auth/change-password` 會標記工作階段失效或更新雜湊，若需強制登出所有裝置可直接清除 `user_sessions` 中相同 `user_id` 的紀錄。
+5. **前端整合**
+   - 新增 `/login`、`/register`、`/account` 頁面，於瀏覽器 `localStorage` 保存存取權杖並自動附加於受保護 API。
+   - 未登入的使用者將被導向 `/login`，上傳影像或建立新病患時會自動檢查權杖是否過期。
+6. **驗證流程**
+   - 啟動後端 `uvicorn backend.main:app --reload` 並確認 `/docs` 可使用。
+   - 於前端資料夾執行 `npm install && npm run dev`，登入成功後即可從 `/account` 管理個人資料並測試影像上傳流程。
+
 ---
 
 本設計著重於模組化與擴展性，透過統一資料結構與插件式模型管理，確保系統能隨著新病徵與新演算法快速演進，同時兼顧臨床使用者體驗與工程維運效率。
