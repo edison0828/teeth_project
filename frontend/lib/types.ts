@@ -1,4 +1,4 @@
-export interface SeveritySlice {
+﻿export interface SeveritySlice {
   level: string;
   percentage: number;
 }
@@ -72,6 +72,12 @@ export interface ImageMetadata {
   storage_uri?: string | null;
 }
 
+export interface ImageUploadResponse {
+  upload_url: string;
+  image: ImageMetadata;
+  auto_analyze: boolean;
+}
+
 export interface AnalysisSummary {
   id: string;
   image_id: string;
@@ -136,3 +142,6 @@ export interface AnalysisDetail extends AnalysisSummary {
     overall_confidence: number;
   };
 }
+
+
+

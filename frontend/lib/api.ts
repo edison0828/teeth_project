@@ -1,5 +1,5 @@
-import { fallbackAnalysis, fallbackDashboard, fallbackPatientDetail, fallbackPatients } from "./mock-data";
-import type { AnalysisDetail, DashboardOverview, PatientDetail, PatientListResponse } from "./types";
+﻿import { fallbackAnalysis, fallbackDashboard, fallbackPatientDetail, fallbackPatients } from "./mock-data";
+import type { AnalysisDetail, DashboardOverview, ImageUploadResponse, PatientDetail, PatientListResponse } from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
@@ -38,4 +38,19 @@ export async function fetchPatientDetail(patientId: string): Promise<PatientDeta
 
 export async function fetchAnalysisDetail(analysisId: string): Promise<AnalysisDetail> {
   return fetchJson<AnalysisDetail>(`/api/analyses/${analysisId}`, fallbackAnalysis);
+}
+
+export async function uploadImage(formData: FormData): Promise<ImageUploadResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/uploads/images`, {
+    method: "POST",
+    body: formData,
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Upload failed: ${response.status}`);
+  }
+
+  return (await response.json()) as ImageUploadResponse;
 }

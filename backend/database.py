@@ -1,0 +1,130 @@
+"""Database layer and ORM models for the Oral X-Ray backend."""
+from __future__ import annotations
+
+import os
+from datetime import datetime, date
+from pathlib import Path
+from typing import Generator, Optional
+
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    JSON,
+    String,
+    Text,
+    create_engine,
+)
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
+
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    base_dir = Path(__file__).resolve().parent
+    db_path = base_dir / "teeth.db"
+    DATABASE_URL = f"sqlite:///{db_path}"
+
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+
+class Base(DeclarativeBase):
+    """Base class for declarative SQLAlchemy models."""
+
+
+class Patient(Base):
+    __tablename__ = "patients"
+
+    id: Mapped[str] = mapped_column(String(20), primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    dob: Mapped[date] = mapped_column(Date, nullable=False)
+    gender: Mapped[str] = mapped_column(String(30), nullable=False)
+    contact: Mapped[Optional[str]] = mapped_column(String(150))
+    medical_history: Mapped[Optional[str]] = mapped_column(Text)
+    last_visit: Mapped[Optional[date]] = mapped_column(Date)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+
+    images: Mapped[list["ImageStudy"]] = relationship(
+        "ImageStudy", back_populates="patient", cascade="all, delete-orphan"
+    )
+
+
+class ImageStudy(Base):
+    __tablename__ = "images"
+
+    id: Mapped[str] = mapped_column(String(20), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(ForeignKey("patients.id"), nullable=False, index=True)
+    type: Mapped[str] = mapped_column(String(50), nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    status: Mapped[str] = mapped_column(String(50), default="uploaded")
+    storage_uri: Mapped[Optional[str]] = mapped_column(String(255))
+    original_filename: Mapped[Optional[str]] = mapped_column(String(255))
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    auto_analyze: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    patient: Mapped["Patient"] = relationship("Patient", back_populates="images")
+    analyses: Mapped[list["Analysis"]] = relationship(
+        "Analysis", back_populates="image", cascade="all, delete-orphan"
+    )
+
+
+class Analysis(Base):
+    __tablename__ = "analyses"
+
+    id: Mapped[str] = mapped_column(String(20), primary_key=True)
+    image_id: Mapped[str] = mapped_column(ForeignKey("images.id"), nullable=False, index=True)
+    requested_by: Mapped[str] = mapped_column(String(80), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    priority: Mapped[str] = mapped_column(String(20), default="standard")
+    triggered_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    overall_assessment: Mapped[Optional[str]] = mapped_column(Text)
+    detected_conditions: Mapped[list[dict]] = mapped_column(JSON, default=list)
+
+    image: Mapped["ImageStudy"] = relationship("ImageStudy", back_populates="analyses")
+    findings: Mapped[list["Finding"]] = relationship(
+        "Finding", back_populates="analysis", cascade="all, delete-orphan"
+    )
+
+
+class Finding(Base):
+    __tablename__ = "findings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    analysis_id: Mapped[str] = mapped_column(ForeignKey("analyses.id"), nullable=False, index=True)
+    finding_id: Mapped[str] = mapped_column(String(40), nullable=False)
+    type: Mapped[str] = mapped_column(String(40), nullable=False)
+    tooth_label: Mapped[Optional[str]] = mapped_column(String(40))
+    region: Mapped[dict] = mapped_column(JSON, default=dict)
+    severity: Mapped[Optional[str]] = mapped_column(String(20))
+    confidence: Mapped[Optional[float]] = mapped_column(Float)
+    model_key: Mapped[Optional[str]] = mapped_column(String(60))
+    model_version: Mapped[Optional[str]] = mapped_column(String(40))
+    extra: Mapped[dict] = mapped_column(JSON, default=dict)
+    note: Mapped[Optional[str]] = mapped_column(Text)
+    confirmed: Mapped[Optional[bool]] = mapped_column(Boolean)
+
+    analysis: Mapped["Analysis"] = relationship("Analysis", back_populates="findings")
+
+
+def init_db() -> None:
+    """Create database tables if they do not already exist."""
+
+    Base.metadata.create_all(bind=engine)
+
+
+def get_session() -> Generator[Session, None, None]:
+    """Return a scoped SQLAlchemy session for dependency injection."""
+
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
