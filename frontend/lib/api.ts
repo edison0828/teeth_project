@@ -1,10 +1,13 @@
-import { fallbackAnalysis, fallbackAnalysesSummary, fallbackDashboard, fallbackPatientDetail, fallbackPatients } from "./mock-data";
+import { fallbackAnalysis, fallbackAnalysesSummary, fallbackDashboard, fallbackModels, fallbackPatientDetail, fallbackPatients } from "./mock-data";
 import type {
   AnalysisDetail,
   AnalysisSummary,
   ChangePasswordRequest,
   DashboardOverview,
   ImageUploadResponse,
+  ModelConfig,
+  ModelConfigCreateRequest,
+  ModelConfigUpdateRequest,
   PatientDetail,
   PatientListResponse,
   TokenResponse,
@@ -80,6 +83,53 @@ export async function uploadImage(formData: FormData, token?: string): Promise<I
   }
 
   return (await response.json()) as ImageUploadResponse;
+}
+
+export async function fetchModels(token?: string): Promise<ModelConfig[]> {
+  return fetchJson<ModelConfig[]>("/api/models", fallbackModels, token);
+}
+
+export async function createModelConfig(token: string, payload: ModelConfigCreateRequest): Promise<ModelConfig> {
+  const response = await fetch(`${API_BASE_URL}/api/models`, {
+    method: "POST",
+    headers: buildAuthHeaders(token, {
+      "Content-Type": "application/json"
+    }),
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error(await extractErrorMessage(response));
+  }
+
+  return (await response.json()) as ModelConfig;
+}
+
+export async function updateModelConfig(token: string, modelId: string, payload: ModelConfigUpdateRequest): Promise<ModelConfig> {
+  const response = await fetch(`${API_BASE_URL}/api/models/${modelId}`, {
+    method: "PATCH",
+    headers: buildAuthHeaders(token, {
+      "Content-Type": "application/json"
+    }),
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error(await extractErrorMessage(response));
+  }
+
+  return (await response.json()) as ModelConfig;
+}
+
+export async function activateModelConfig(token: string, modelId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/models/${modelId}/activate`, {
+    method: "POST",
+    headers: buildAuthHeaders(token)
+  });
+
+  if (!response.ok && response.status !== 204) {
+    throw new Error(await extractErrorMessage(response));
+  }
 }
 
 async function extractErrorMessage(response: Response): Promise<string> {

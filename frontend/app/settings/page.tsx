@@ -1,4 +1,6 @@
+import { fetchModels } from "../../lib/api";
 import { readServerToken } from "../../lib/server-auth";
+import ModelManager from "./ModelManager";
 
 const toggles = [
   { id: "notify-email", label: "電子郵件通知", description: "有新的 AI 分析或報告時透過 email 提醒。" },
@@ -12,6 +14,8 @@ export default async function SettingsPage() {
   if (!token) {
     return null;
   }
+  const models = await fetchModels(token);
+
 
   return (
     <div className="space-y-8">
@@ -43,23 +47,16 @@ export default async function SettingsPage() {
           </form>
         </div>
         <div className="rounded-3xl bg-white/5 p-6 shadow-card">
-          <h2 className="text-lg font-semibold text-white">模型與流程</h2>
-          <ul className="mt-5 space-y-4 text-sm text-slate-200">
-            <li className="rounded-2xl border border-white/10 bg-[#0B142A] p-4">
-              <p className="text-sm font-semibold text-white">模型版本</p>
-              <p className="text-xs text-slate-400">Caries Detector v1.3.0 · Periodontal Segmenter v0.9.1</p>
-            </li>
-            <li className="rounded-2xl border border-white/10 bg-[#0B142A] p-4">
-              <p className="text-sm font-semibold text-white">分析 SLA</p>
-              <p className="text-xs text-slate-400">標準分析需於 15 分鐘內完成，逾時將發送通知。</p>
-            </li>
-            <li className="rounded-2xl border border-white/10 bg-[#0B142A] p-4">
-              <p className="text-sm font-semibold text-white">維運排程</p>
-              <p className="text-xs text-slate-400">下次系統保養：11 月 25 日 03:00-04:00 (GMT+8)</p>
-            </li>
-          </ul>
+          <h2 className="text-lg font-semibold text-white">模型管理</h2>
+          <p className="mt-1 text-sm text-slate-300">檢視或切換當前使用的推論權重，並新增替代模型設定。</p>
+          <div className="mt-5">
+            <ModelManager initialModels={models} />
+          </div>
         </div>
       </section>
     </div>
   );
 }
+
+
+

@@ -20,6 +20,7 @@ export interface SystemStatus {
   pending_images: number;
   new_reports: number;
   models_active: number;
+  active_model_name?: string | null;
   last_synced: string;
 }
 
@@ -76,7 +77,38 @@ export interface ImageUploadResponse {
   upload_url: string;
   image: ImageMetadata;
   auto_analyze: boolean;
+  analysis_id?: string | null;
 }
+
+export interface ModelConfig {
+  id: string;
+  name: string;
+  description?: string | null;
+  detector_path: string;
+  classifier_path: string;
+  detector_threshold: number;
+  classification_threshold: number;
+  max_teeth: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ModelConfigCreateRequest {
+  name: string;
+  description?: string | null;
+  detector_path: string;
+  classifier_path: string;
+  detector_threshold: number;
+  classification_threshold: number;
+  max_teeth: number;
+  is_active?: boolean;
+}
+
+export interface ModelConfigUpdateRequest extends Partial<ModelConfigCreateRequest> {
+  is_active?: boolean;
+}
+
 
 export interface AnalysisSummary {
   id: string;
@@ -173,3 +205,4 @@ export interface TokenResponse {
   token_type: string;
   expires_in: number;
 }
+

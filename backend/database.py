@@ -1,4 +1,4 @@
-﻿"""Database layer and ORM models for the Oral X-Ray backend."""
+"""Database layer and ORM models for the Oral X-Ray backend."""
 from __future__ import annotations
 
 import os
@@ -144,6 +144,22 @@ class Finding(Base):
 
     analysis: Mapped["Analysis"] = relationship("Analysis", back_populates="findings")
 
+
+
+class ModelConfig(Base):
+    __tablename__ = "model_configs"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    detector_path: Mapped[str] = mapped_column(String(255), nullable=False)
+    classifier_path: Mapped[str] = mapped_column(String(255), nullable=False)
+    detector_threshold: Mapped[float] = mapped_column(Float, default=0.25)
+    classification_threshold: Mapped[float] = mapped_column(Float, default=0.5)
+    max_teeth: Mapped[int] = mapped_column(Integer, default=64)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 def init_db() -> None:
     """Create database tables if they do not already exist."""

@@ -1,8 +1,8 @@
-﻿'use client';
+'use client';
 
-import { ChangeEvent, DragEvent, FormEvent, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
-import { uploadImage } from "../../lib/api";
+import { fetchAnalysisDetail, uploadImage } from "../../lib/api";
 import { readToken } from "../../lib/auth-storage";
 import type { ImageUploadResponse, PatientSummary } from "../../lib/types";
 
@@ -11,6 +11,20 @@ type UploadState =
   | { state: "uploading" }
   | { state: "success"; payload: ImageUploadResponse }
   | { state: "error"; message: string };
+
+type AnalysisMonitorState =
+  | { state: "idle" }
+  | { state: "pending"; analysisId: string; status: string }
+  | { state: "completed"; analysisId: string }
+  | { state: "failed"; analysisId: string; message: string };
+
+const ANALYSIS_STATUS_LABEL: Record<string, string> = {
+  queued: "排程中",
+  scheduled: "排程中",
+  in_progress: "模型推論中",
+  completed: "已完成",
+  failed: "分析失敗"
+};
 
 type UploadFormProps = {
   patients: PatientSummary[];
@@ -45,6 +59,80 @@ export default function UploadForm({ patients }: UploadFormProps) {
   const [capturedAt, setCapturedAt] = useState<string>(formatDateTime());
   const [notes, setNotes] = useState<string>("");
   const [status, setStatus] = useState<UploadState>({ state: "idle" });
+  const [analysisMonitor, setAnalysisMonitor] = useState<AnalysisMonitorState>({ state: "idle" });
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pendingAnalysisId = analysisMonitor.state === "pending" ? analysisMonitor.analysisId : null;
+
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!pendingAnalysisId) {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      return;
+    }
+
+    const token = readToken();
+    if (!token) {
+      setAnalysisMonitor({ state: "failed", analysisId: pendingAnalysisId, message: "請重新登入以檢視分析狀態。" });
+      return;
+    }
+
+    let cancelled = false;
+
+    const checkStatus = async () => {
+      try {
+        const detail = await fetchAnalysisDetail(pendingAnalysisId, token);
+        if (!detail || cancelled) {
+          return;
+        }
+        if (detail.status === "completed") {
+          setAnalysisMonitor({ state: "completed", analysisId: pendingAnalysisId });
+          return;
+        }
+        if (detail.status === "failed") {
+          const message = detail.overall_assessment ?? "分析流程失敗。";
+          setAnalysisMonitor({ state: "failed", analysisId: pendingAnalysisId, message });
+          return;
+        }
+        setAnalysisMonitor((previous) => {
+          if (previous.state !== "pending" || previous.analysisId !== pendingAnalysisId) {
+            return previous;
+          }
+          if (previous.status === detail.status) {
+            return previous;
+          }
+          return { ...previous, status: detail.status };
+        });
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : "無法取得分析狀態。";
+        setAnalysisMonitor({ state: "failed", analysisId: pendingAnalysisId, message });
+      }
+    };
+
+    checkStatus();
+    pollRef.current = setInterval(checkStatus, 4000);
+
+    return () => {
+      cancelled = true;
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [pendingAnalysisId]);
+
 
   const patientOptions = useMemo(() => patients.map((patient) => ({ value: patient.id, label: patient.name })), [patients]);
   const hasPatients = patientOptions.length > 0;
@@ -55,6 +143,7 @@ export default function UploadForm({ patients }: UploadFormProps) {
     if (selected) {
       setFile(selected);
       setStatus({ state: "idle" });
+      setAnalysisMonitor({ state: "idle" });
     }
   };
 
@@ -75,6 +164,7 @@ export default function UploadForm({ patients }: UploadFormProps) {
 
   const submitForm = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    setAnalysisMonitor({ state: "idle" });
 
     if (!file) {
       setStatus({ state: "error", message: "Please select an image or DICOM file to upload." });
@@ -114,6 +204,11 @@ export default function UploadForm({ patients }: UploadFormProps) {
     try {
       const response = await uploadImage(formData, token);
       setStatus({ state: "success", payload: response });
+      if (response.auto_analyze && response.analysis_id) {
+        setAnalysisMonitor({ state: "pending", analysisId: response.analysis_id, status: "queued" });
+      } else {
+        setAnalysisMonitor({ state: "idle" });
+      }
       setFile(null);
       setNotes("");
       if (fileInputRef.current) {
@@ -121,6 +216,7 @@ export default function UploadForm({ patients }: UploadFormProps) {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Upload failed. Please try again.";
+      setAnalysisMonitor({ state: "idle" });
       setStatus({ state: "error", message });
     }
   };
@@ -130,6 +226,9 @@ export default function UploadForm({ patients }: UploadFormProps) {
       case "uploading":
         return "Uploading image to the analysis queue...";
       case "success":
+        if (status.payload.auto_analyze && status.payload.analysis_id) {
+          return `Upload completed. Analysis ${status.payload.analysis_id} 已排入 AI 管線。`;
+        }
         return `Upload completed. Image ID: ${status.payload.image.id}`;
       case "error":
         return status.message;
@@ -207,10 +306,43 @@ export default function UploadForm({ patients }: UploadFormProps) {
                 <div className="rounded-xl bg-white/5 px-3 py-2 text-xs text-slate-300">
                   <p>Stored at: {status.payload.image.storage_uri ?? "local storage"}</p>
                   {status.payload.auto_analyze ? (
-                    <p>Analysis job queued automatically.</p>
+                    <p>
+                      AI pipeline triggered.
+                      {status.payload.analysis_id ? ` 任務編號：${status.payload.analysis_id}` : ""}
+                    </p>
                   ) : (
                     <p>Auto analysis not requested.</p>
                   )}
+                </div>
+              )}
+              {analysisMonitor.state === "pending" && (
+                <div className="flex items-center gap-3 rounded-xl bg-primary/10 px-3 py-2 text-xs text-primary-subtle">
+                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                  <div>
+                    <p className="text-sm text-white">AI 分析進行中</p>
+                    <p className="text-xs text-slate-300">
+                      {`目前狀態：${ANALYSIS_STATUS_LABEL[analysisMonitor.status] ?? analysisMonitor.status}`}
+                    </p>
+                  </div>
+                </div>
+              )}
+              {analysisMonitor.state === "completed" && (
+                <div className="rounded-xl bg-accent/10 px-3 py-2 text-xs text-accent">
+                  <p className="text-sm font-semibold text-white">AI 分析完成</p>
+                  <p className="mt-1">
+                    <a
+                      href={`/analysis/${analysisMonitor.analysisId}`}
+                      className="font-semibold text-primary underline underline-offset-2"
+                    >
+                      前往結果
+                    </a>
+                  </p>
+                </div>
+              )}
+              {analysisMonitor.state === "failed" && (
+                <div className="rounded-xl bg-red-500/10 px-3 py-2 text-xs text-red-300">
+                  <p className="text-sm font-semibold text-white">AI 分析失敗</p>
+                  <p className="mt-1">{analysisMonitor.message}</p>
                 </div>
               )}
             </div>

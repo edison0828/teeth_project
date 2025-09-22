@@ -22,6 +22,7 @@ class SystemStatus(BaseModel):
     pending_images: int = Field(..., description="Number of images waiting for review")
     new_reports: int = Field(..., description="New analysis reports awaiting review")
     models_active: int = Field(..., description="Enabled AI models")
+    active_model_name: Optional[str] = None
     last_synced: datetime
 
 
@@ -149,6 +150,39 @@ class ImageUploadResponse(BaseModel):
     upload_url: str
     image: ImageMetadata
     auto_analyze: bool
+    analysis_id: Optional[str] = None
+
+
+class ModelConfigBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+    detector_path: str
+    classifier_path: str
+    detector_threshold: float = Field(0.25, ge=0, le=1)
+    classification_threshold: float = Field(0.5, ge=0, le=1)
+    max_teeth: int = Field(64, ge=1, le=256)
+
+
+class ModelConfigCreate(ModelConfigBase):
+    is_active: bool = False
+
+
+class ModelConfigUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    detector_path: Optional[str] = None
+    classifier_path: Optional[str] = None
+    detector_threshold: Optional[float] = Field(None, ge=0, le=1)
+    classification_threshold: Optional[float] = Field(None, ge=0, le=1)
+    max_teeth: Optional[int] = Field(None, ge=1, le=256)
+    is_active: Optional[bool] = None
+
+
+class ModelConfigPublic(ModelConfigBase):
+    id: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
 
 
 class AnalysisBase(BaseModel):

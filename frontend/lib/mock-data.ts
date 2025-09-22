@@ -1,4 +1,4 @@
-import { type AnalysisDetail, type AnalysisSummary, type DashboardOverview, type PatientDetail, type PatientListResponse } from "./types";
+import { type AnalysisDetail, type AnalysisSummary, type DashboardOverview, type ModelConfig, type PatientDetail, type PatientListResponse } from "./types";
 
 const nowIso = new Date().toISOString();
 
@@ -21,6 +21,7 @@ export const fallbackDashboard: DashboardOverview = {
     pending_images: 2,
     new_reports: 3,
     models_active: 4,
+    active_model_name: "Mock Model v1",
     last_synced: nowIso
   },
   statistics: {
@@ -225,3 +226,18 @@ export const fallbackAnalysis: AnalysisDetail = {
     ]
   }
 };
+export const fallbackModels: ModelConfig[] = [
+  {
+    id: "MODEL-MOCK",
+    name: "Mock Model v1",
+    description: "Default mock configuration for offline mode",
+    detector_path: "models/fdi_all seg.pt",
+    classifier_path: "models/cross_attn_fdi_camAlignA.pth",
+    detector_threshold: 0.25,
+    classification_threshold: 0.5,
+    max_teeth: 64,
+    is_active: true,
+    created_at: nowIso,
+    updated_at: nowIso
+  }
+];

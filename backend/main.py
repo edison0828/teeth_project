@@ -4,10 +4,10 @@ from __future__ import annotations
 import os
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
@@ -24,9 +24,13 @@ from .database import (
     UserSession,
     Patient,
     SessionLocal,
+    ModelConfig,
     get_session,
     init_db,
 )
+
+
+from .analysis_service import process_analysis_job
 
 
 UPLOAD_ROOT = Path(__file__).resolve().parent.parent / "uploaded_images"
@@ -35,6 +39,8 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60")
 SESSION_EXPIRE_DAYS = int(os.getenv("SESSION_EXPIRE_DAYS", "7"))
 SECRET_KEY = os.getenv("SECRET_KEY", "please-change-me")
 ALGORITHM = "HS256"
+
+SEED_DEMO_DATA = os.getenv("SEED_DEMO_DATA", "false").lower() in {"1", "true", "yes"}
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -128,8 +134,9 @@ def on_startup() -> None:
 
     init_db()
     UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
-    with SessionLocal() as session:
-        _seed_database(session)
+    if SEED_DEMO_DATA:
+        with SessionLocal() as session:
+            _seed_database(session)
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +146,26 @@ def on_startup() -> None:
 
 def _seed_database(session: Session) -> None:
     """Populate the database with demo entities if empty."""
+
+    existing_models = session.scalar(select(func.count()).select_from(ModelConfig))
+    if not existing_models:
+        models_root = Path(__file__).resolve().parent.parent / "models"
+        default_detector = (models_root / "fdi_all seg.pt").as_posix()
+        default_classifier = (models_root / "cross_attn_fdi_camAlignA.pth").as_posix()
+        session.add(
+            ModelConfig(
+                id=_generate_model_config_id(session),
+                name="Cross-Attn Caries",
+                description="Demo configuration",
+                detector_path=default_detector,
+                classifier_path=default_classifier,
+                detector_threshold=0.25,
+                classification_threshold=0.5,
+                max_teeth=64,
+                is_active=True,
+            )
+        )
+        session.commit()
 
     existing_patients = session.scalar(select(func.count()).select_from(Patient))
     if existing_patients:
@@ -362,6 +389,26 @@ def _image_metadata(image: ImageStudy) -> schemas.ImageMetadata:
     )
 
 
+def _model_config_public(model: ModelConfig) -> schemas.ModelConfigPublic:
+    return schemas.ModelConfigPublic(
+        id=model.id,
+        name=model.name,
+        description=model.description,
+        detector_path=model.detector_path,
+        classifier_path=model.classifier_path,
+        detector_threshold=model.detector_threshold,
+        classification_threshold=model.classification_threshold,
+        max_teeth=model.max_teeth,
+        is_active=model.is_active,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+    )
+
+
+def _active_model(session: Session) -> Optional[ModelConfig]:
+    return session.scalars(select(ModelConfig).where(ModelConfig.is_active == True)).first()
+
+
 def _analysis_summary(analysis: Analysis) -> schemas.AnalysisSummary:
     return schemas.AnalysisSummary(
         id=analysis.id,
@@ -414,6 +461,9 @@ def _analysis_detail_from_instance(analysis: Analysis) -> schemas.AnalysisDetail
         )
         for f in analysis.findings
     ]
+
+    confidences = [finding.confidence for finding in findings if finding.confidence is not None]
+    overall_confidence = (sum(confidences) / len(confidences)) if confidences else 0.0
 
     detected_conditions = _condition_summaries(analysis.detected_conditions)
 
@@ -469,7 +519,7 @@ def _analysis_detail_from_instance(analysis: Analysis) -> schemas.AnalysisDetail
             ),
         ],
         progress=schemas.AnalysisProgress(
-            overall_confidence=0.86,
+            overall_confidence=overall_confidence,
             steps=progress_steps,
         ),
     )
@@ -521,10 +571,11 @@ def _create_image_record(
     image_id: str | None = None,
     priority: str = "standard",
     requested_by: str = "system",
-) -> ImageStudy:
+) -> Tuple[ImageStudy, Optional[Analysis]]:
     if image_id is None:
         image_id = _generate_image_id(session)
     record_status = status or ("queued" if auto_analyze else "uploaded")
+    analysis: Analysis | None = None
 
     image = ImageStudy(
         id=image_id,
@@ -542,9 +593,9 @@ def _create_image_record(
     session.flush()
 
     if auto_analyze:
-        _enqueue_analysis(session, image=image, requested_by=requested_by, priority=priority)
+        analysis = _enqueue_analysis(session, image=image, requested_by=requested_by, priority=priority)
 
-    return image
+    return image, analysis
 
 
 async def _persist_upload(file: UploadFile, destination: Path) -> str:
@@ -904,6 +955,7 @@ async def get_patient_analyses(patient_id: str, db: Session = Depends(get_sessio
 @app.post("/api/images", response_model=schemas.ImageUploadResponse)
 async def create_image(
     payload: schemas.ImageCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_active_user),
 ) -> schemas.ImageUploadResponse:
@@ -911,7 +963,7 @@ async def create_image(
     if patient is None:
         raise HTTPException(status_code=404, detail="Patient not found")
 
-    image = _create_image_record(
+    image, _analysis = _create_image_record(
         db,
         patient_id=payload.patient_id,
         study_type=payload.type,
@@ -926,10 +978,17 @@ async def create_image(
     db.commit()
     db.refresh(image)
 
+    analysis_id = None
+    if _analysis is not None:
+        db.refresh(_analysis)
+        analysis_id = _analysis.id
+        background_tasks.add_task(process_analysis_job, analysis_id)
+
     return schemas.ImageUploadResponse(
         upload_url=f"/uploaded_images/{image.id}",
         image=_image_metadata(image),
         auto_analyze=payload.auto_analyze,
+        analysis_id=analysis_id,
     )
 
 
@@ -939,6 +998,7 @@ async def create_image(
     status_code=201,
 )
 async def upload_image(
+    background_tasks: BackgroundTasks,
     patient_id: str = Form(...),
     study_type: str = Form(..., alias="type"),
     captured_at: str = Form(...),
@@ -964,7 +1024,7 @@ async def upload_image(
     storage_uri = await _persist_upload(file, destination)
     notes_value = notes.strip() if notes and notes.strip() else None
 
-    image = _create_image_record(
+    image, _analysis = _create_image_record(
         db,
         patient_id=patient_id,
         study_type=study_type,
@@ -980,10 +1040,17 @@ async def upload_image(
     db.commit()
     db.refresh(image)
 
+    analysis_id = None
+    if _analysis is not None:
+        db.refresh(_analysis)
+        analysis_id = _analysis.id
+        background_tasks.add_task(process_analysis_job, analysis_id)
+
     return schemas.ImageUploadResponse(
         upload_url=storage_uri,
         image=_image_metadata(image),
         auto_analyze=auto_analyze,
+        analysis_id=analysis_id,
     )
 
 
@@ -1025,6 +1092,7 @@ async def list_analyses(
     analyses = db.scalars(stmt).all()
     analyses_sorted = sorted(analyses, key=lambda a: a.triggered_at, reverse=True)
     return [_analysis_summary(analysis) for analysis in analyses_sorted]
+
 
 
 

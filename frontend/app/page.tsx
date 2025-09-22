@@ -1,4 +1,4 @@
-import Link from "next/link";
+﻿import Link from "next/link";
 import ProgressCircle from "../components/ProgressCircle";
 import { readServerToken } from "../lib/server-auth";
 import StatCard from "../components/StatCard";
@@ -51,7 +51,7 @@ export default async function DashboardPage() {
             <StatCard
               title="Models Active"
               value={overview.system_status.models_active}
-              description={`Last synced ${new Date(overview.system_status.last_synced).toLocaleString()}`}
+              description={`Active: ${overview.system_status.active_model_name ?? "未設定"} · Last synced ${new Date(overview.system_status.last_synced).toLocaleString()}`}
             />
           </div>
         </div>
