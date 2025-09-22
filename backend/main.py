@@ -363,6 +363,9 @@ def _generate_analysis_id(session: Session) -> str:
 
 
 
+def _generate_model_config_id(session: Session) -> str:
+    return _generate_identifier("MODEL-", session, ModelConfig, length=4)
+
 def _generate_user_id(session: Session) -> str:
     return _generate_identifier("USR-", session, User, length=6)
 
@@ -847,6 +850,122 @@ async def get_dashboard_overview(db: Session = Depends(get_session)) -> schemas.
     )
 
 
+
+
+@app.get("/api/models", response_model=List[schemas.ModelConfigPublic])
+async def list_model_configs(
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_active_user),
+) -> List[schemas.ModelConfigPublic]:
+    models = db.scalars(select(ModelConfig).order_by(ModelConfig.created_at.desc())).all()
+    return [_model_config_public(model) for model in models]
+
+
+@app.post("/api/models", response_model=schemas.ModelConfigPublic, status_code=201)
+async def create_model_config(
+    payload: schemas.ModelConfigCreate,
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_active_user),
+) -> schemas.ModelConfigPublic:
+    if payload.is_active:
+        db.query(ModelConfig).filter(ModelConfig.is_active == True).update(
+            {ModelConfig.is_active: False}, synchronize_session=False
+        )
+
+    model = ModelConfig(
+        id=_generate_model_config_id(db),
+        name=payload.name,
+        description=payload.description,
+        detector_path=payload.detector_path,
+        classifier_path=payload.classifier_path,
+        detector_threshold=payload.detector_threshold,
+        classification_threshold=payload.classification_threshold,
+        max_teeth=payload.max_teeth,
+        is_active=payload.is_active,
+    )
+    db.add(model)
+    db.commit()
+    db.refresh(model)
+    return _model_config_public(model)
+
+
+@app.get("/api/models/{model_id}", response_model=schemas.ModelConfigPublic)
+async def get_model_config(
+    model_id: str,
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_active_user),
+) -> schemas.ModelConfigPublic:
+    model = db.get(ModelConfig, model_id)
+    if model is None:
+        raise HTTPException(status_code=404, detail="Model configuration not found")
+    return _model_config_public(model)
+
+
+@app.patch("/api/models/{model_id}", response_model=schemas.ModelConfigPublic)
+async def update_model_config(
+    model_id: str,
+    payload: schemas.ModelConfigUpdate,
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_active_user),
+) -> schemas.ModelConfigPublic:
+    model = db.get(ModelConfig, model_id)
+    if model is None:
+        raise HTTPException(status_code=404, detail="Model configuration not found")
+
+    updated = False
+    for field in [
+        "name",
+        "description",
+        "detector_path",
+        "classifier_path",
+        "detector_threshold",
+        "classification_threshold",
+        "max_teeth",
+    ]:
+        value = getattr(payload, field)
+        if value is not None:
+            setattr(model, field, value)
+            updated = True
+
+    if payload.is_active is not None:
+        if payload.is_active:
+            db.query(ModelConfig).filter(
+                ModelConfig.id != model_id, ModelConfig.is_active == True
+            ).update({ModelConfig.is_active: False}, synchronize_session=False)
+            model.is_active = True
+        else:
+            model.is_active = False
+        updated = True
+
+    if updated:
+        db.add(model)
+        db.commit()
+        db.refresh(model)
+
+    return _model_config_public(model)
+
+
+@app.post("/api/models/{model_id}/activate", status_code=204, response_class=Response)
+async def activate_model_config(
+    model_id: str,
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_active_user),
+) -> Response:
+    model = db.get(ModelConfig, model_id)
+    if model is None:
+        raise HTTPException(status_code=404, detail="Model configuration not found")
+
+    if not model.is_active:
+        db.query(ModelConfig).filter(
+            ModelConfig.id != model_id, ModelConfig.is_active == True
+        ).update({ModelConfig.is_active: False}, synchronize_session=False)
+        model.is_active = True
+        db.add(model)
+        db.commit()
+
+    return Response(status_code=204)
+
+
 @app.get("/api/patients", response_model=schemas.PatientListResponse)
 async def list_patients(
     search: str | None = None,
@@ -1092,8 +1211,3 @@ async def list_analyses(
     analyses = db.scalars(stmt).all()
     analyses_sorted = sorted(analyses, key=lambda a: a.triggered_at, reverse=True)
     return [_analysis_summary(analysis) for analysis in analyses_sorted]
-
-
-
-
-
