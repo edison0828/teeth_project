@@ -137,6 +137,7 @@ class ImageMetadata(BaseModel):
     captured_at: datetime
     status: str
     storage_uri: Optional[str] = None
+    public_url: Optional[str] = None
 
 
 class ImageCreate(BaseModel):
@@ -196,6 +197,7 @@ class AnalysisBase(BaseModel):
 class AnalysisSummary(AnalysisBase):
     id: str
     overall_assessment: Optional[str] = None
+    preview: Optional[AnalysisPreview] = None
 
 
 class AnalysisCreate(BaseModel):
@@ -222,6 +224,25 @@ class AnalysisFinding(BaseModel):
     extra: dict = Field(default_factory=dict)
     note: Optional[str] = None
     confirmed: Optional[bool] = None
+
+class AnalysisPreviewFinding(BaseModel):
+    finding_id: str
+    tooth_label: Optional[str] = None
+    bbox: List[float] = Field(..., min_items=4, max_items=4)
+    severity: str
+    confidence: float
+    assets: Optional[dict] = None
+    bbox_normalized: Optional[List[float]] = None
+    centroid: Optional[List[float]] = None
+    color_bgr: Optional[List[int]] = None
+
+
+class AnalysisPreview(BaseModel):
+    image_uri: Optional[str] = None
+    overlay_uri: Optional[str] = None
+    image_size: Optional[List[int]] = None
+    findings: List[AnalysisPreviewFinding] = Field(default_factory=list)
+
 
 
 class PatientDetail(Patient):

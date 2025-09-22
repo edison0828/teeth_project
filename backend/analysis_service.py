@@ -89,7 +89,7 @@ def process_analysis_job(analysis_id: str) -> None:
 
         image_path = Path(image.storage_uri)
         try:
-            result = engine.analyze(image_path)
+            result = engine.analyze(image_path, analysis_id=analysis.id, image_id=image.id)
         except InferenceError as exc:
             analysis.status = "failed"
             analysis.completed_at = datetime.utcnow()

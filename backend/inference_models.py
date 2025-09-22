@@ -146,6 +146,9 @@ class CrossAttnFDI(nn.Module):
     ) -> torch.Tensor | Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         feat = self.backbone(image)
         batch, channels, h, w = feat.shape
+        if return_feat_for_cam:
+            feat = feat.clone()
+            feat.retain_grad()
         fdi_emb = self.fdi_emb(fdi_idx)
 
         if self.use_film:

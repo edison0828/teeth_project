@@ -114,7 +114,8 @@ export const fallbackPatientDetail: PatientDetail = {
       type: "Panoramic",
       captured_at: nowIso,
       status: "analyzed",
-      storage_uri: "s3://oral-xray/panoramic/P12345_20231030.png"
+      storage_uri: "s3://oral-xray/panoramic/P12345_20231030.png",
+      public_url: "/mock-data/panoramic.png"
     }
   ],
   recent_analyses: [
@@ -138,7 +139,22 @@ export const fallbackAnalysesSummary: AnalysisSummary[] = [
     status: "completed",
     triggered_at: nowIso,
     completed_at: nowIso,
-    overall_assessment: "Found 2 caries, 1 periodontal lesion"
+    overall_assessment: "Found 2 caries, 1 periodontal lesion",
+    preview: {
+      image_uri: "/mock-data/panoramic.png",
+      overlay_uri: "/mock-data/panoramic_overlay.png",
+      image_size: [2048, 1024],
+      findings: [
+        {
+          finding_id: "FND-PREVIEW-1",
+          tooth_label: "FDI-26",
+          bbox: [240, 132, 88, 76],
+          severity: "moderate",
+          confidence: 0.87,
+          assets: { gradcam: "/mock-data/gradcam_26.png" }
+        }
+      ]
+    },
   },
   {
     id: "AN-902",
@@ -168,6 +184,21 @@ export const fallbackAnalysis: AnalysisDetail = {
   triggered_at: nowIso,
   completed_at: nowIso,
   overall_assessment: "Found 2 caries, 1 periodontal lesion.",
+  preview: {
+    image_uri: "/mock-data/panoramic.png",
+    overlay_uri: "/mock-data/panoramic_overlay.png",
+    image_size: [2048, 1024],
+    findings: [
+      {
+        finding_id: "FND-1",
+        tooth_label: "FDI-26",
+        bbox: [240, 132, 88, 76],
+        severity: "moderate",
+        confidence: 0.87,
+        assets: { gradcam: "/mock-data/gradcam_26.png" }
+      }
+    ]
+  },
   patient: fallbackPatientDetail,
   image: fallbackPatientDetail.recent_images[0],
   detected_conditions: fallbackDashboard.detected_conditions,

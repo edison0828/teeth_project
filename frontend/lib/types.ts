@@ -71,6 +71,7 @@ export interface ImageMetadata {
   captured_at: string;
   status: string;
   storage_uri?: string | null;
+  public_url?: string | null;
 }
 
 export interface ImageUploadResponse {
@@ -118,6 +119,7 @@ export interface AnalysisSummary {
   triggered_at: string;
   completed_at?: string | null;
   overall_assessment?: string | null;
+  preview?: AnalysisPreview | null;
 }
 
 export interface PatientDetail {
@@ -131,6 +133,25 @@ export interface PatientDetail {
   notes?: string | null;
   recent_images: ImageMetadata[];
   recent_analyses: AnalysisSummary[];
+}
+
+export interface AnalysisPreviewFinding {
+  finding_id: string;
+  tooth_label?: string | null;
+  bbox: number[];
+  severity: string;
+  confidence: number;
+  assets?: Record<string, string | null> | null;
+  bbox_normalized?: number[] | null;
+  centroid?: number[] | null;
+  color_bgr?: number[] | null;
+}
+
+export interface AnalysisPreview {
+  image_uri?: string | null;
+  overlay_uri?: string | null;
+  image_size?: number[] | null;
+  findings: AnalysisPreviewFinding[];
 }
 
 export interface AnalysisFinding {

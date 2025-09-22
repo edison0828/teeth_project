@@ -10,6 +10,7 @@ from uuid import uuid4
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.staticfiles import StaticFiles
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy import distinct, func, or_, select
@@ -35,6 +36,23 @@ from .analysis_service import process_analysis_job
 
 UPLOAD_ROOT = Path(__file__).resolve().parent.parent / "uploaded_images"
 
+def _public_upload_url(path_str: Optional[str]) -> Optional[str]:
+    if not path_str:
+        return None
+    if path_str.startswith(("http://", "https://")):
+        return path_str
+    if path_str.startswith("/"):
+        return path_str
+    candidate = Path(path_str)
+    try:
+        rel = candidate.resolve().relative_to(UPLOAD_ROOT)
+    except Exception:
+        try:
+            return candidate.as_posix()
+        except Exception:
+            return str(path_str)
+    return f"/uploaded_images/{rel.as_posix()}"
+
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 SESSION_EXPIRE_DAYS = int(os.getenv("SESSION_EXPIRE_DAYS", "7"))
 SECRET_KEY = os.getenv("SECRET_KEY", "please-change-me")
@@ -55,6 +73,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+app.mount("/uploaded_images", StaticFiles(directory=UPLOAD_ROOT, check_dir=False), name="uploaded_images")
 
 # ---------------------------------------------------------------------------
 # Security helpers
@@ -389,6 +409,7 @@ def _image_metadata(image: ImageStudy) -> schemas.ImageMetadata:
         captured_at=image.captured_at,
         status=image.status,
         storage_uri=image.storage_uri,
+        public_url=_public_upload_url(image.storage_uri),
     )
 
 
@@ -412,6 +433,100 @@ def _active_model(session: Session) -> Optional[ModelConfig]:
     return session.scalars(select(ModelConfig).where(ModelConfig.is_active == True)).first()
 
 
+
+def _analysis_preview(analysis: Analysis) -> Optional[schemas.AnalysisPreview]:
+    image_uri: Optional[str] = None
+    overlay_uri: Optional[str] = None
+    image_size: Optional[List[int]] = None
+    findings_preview: List[schemas.AnalysisPreviewFinding] = []
+
+    if analysis.image and analysis.image.storage_uri:
+        image_uri = _public_upload_url(analysis.image.storage_uri)
+
+    for finding in analysis.findings:
+        region = finding.region or {}
+        bbox = region.get("bbox") if isinstance(region, dict) else None
+        if not (isinstance(bbox, list) and len(bbox) >= 4):
+            continue
+
+        bbox_values = [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])]
+        extra = finding.extra or {}
+
+        assets_payload: Optional[dict] = None
+        assets_dict = extra.get("assets")
+        if isinstance(assets_dict, dict):
+            filtered_assets = {k: v for k, v in assets_dict.items() if isinstance(v, str)}
+            if filtered_assets:
+                assets_payload = filtered_assets
+                if overlay_uri is None and "overlay" in filtered_assets:
+                    overlay_uri = filtered_assets["overlay"]
+
+        overlay_candidate = extra.get("analysis_overlay_uri")
+        if isinstance(overlay_candidate, str) and overlay_uri is None:
+            overlay_uri = overlay_candidate
+
+        if image_uri is None:
+            image_candidate = extra.get("image_uri")
+            if isinstance(image_candidate, str):
+                image_uri = image_candidate
+
+        if image_size is None:
+            size = extra.get("image_size")
+            if isinstance(size, dict):
+                width = size.get("width")
+                height = size.get("height")
+                if isinstance(width, (int, float)) and isinstance(height, (int, float)):
+                    image_size = [int(width), int(height)]
+
+        bbox_norm = extra.get("bbox_normalized")
+        if isinstance(bbox_norm, list):
+            bbox_norm = [float(x) for x in bbox_norm[:4]]
+        else:
+            bbox_norm = None
+
+        centroid = extra.get("centroid")
+        if isinstance(centroid, list):
+            centroid = [float(x) for x in centroid[:2]]
+        else:
+            centroid = None
+
+        color = extra.get("color_bgr")
+        if isinstance(color, list):
+            color = [int(x) for x in color[:3]]
+        else:
+            color = None
+
+        findings_preview.append(
+            schemas.AnalysisPreviewFinding(
+                finding_id=finding.finding_id,
+                tooth_label=finding.tooth_label,
+                bbox=bbox_values,
+                severity=finding.severity or "",
+                confidence=finding.confidence or 0.0,
+                assets=assets_payload,
+                bbox_normalized=bbox_norm,
+                centroid=centroid,
+                color_bgr=color,
+            )
+        )
+
+    if overlay_uri is None and analysis.id:
+        overlay_path = UPLOAD_ROOT / "analysis" / analysis.id / "analysis_overlay.png"
+        if overlay_path.exists():
+            overlay_uri = _public_upload_url(str(overlay_path))
+
+    if not findings_preview and not overlay_uri and not image_uri:
+        return None
+
+    return schemas.AnalysisPreview(
+        image_uri=image_uri,
+        overlay_uri=overlay_uri,
+        image_size=image_size,
+        findings=findings_preview,
+    )
+
+
+
 def _analysis_summary(analysis: Analysis) -> schemas.AnalysisSummary:
     return schemas.AnalysisSummary(
         id=analysis.id,
@@ -421,6 +536,7 @@ def _analysis_summary(analysis: Analysis) -> schemas.AnalysisSummary:
         triggered_at=analysis.triggered_at,
         completed_at=analysis.completed_at,
         overall_assessment=analysis.overall_assessment,
+        preview=_analysis_preview(analysis),
     )
 
 
@@ -505,6 +621,7 @@ def _analysis_detail_from_instance(analysis: Analysis) -> schemas.AnalysisDetail
         triggered_at=analysis.triggered_at,
         completed_at=analysis.completed_at,
         overall_assessment=analysis.overall_assessment,
+        preview=_analysis_preview(analysis),
         patient=patient_summary,
         image=image_metadata,
         findings=findings,
