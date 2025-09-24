@@ -349,73 +349,59 @@ class CrossCamInference:
 
 
     def _compute_gradcam(
-
         self,
-
         sample: torch.Tensor,
-
         fdi_idx: torch.Tensor,
-
         original_patch: np.ndarray,
-
     ) -> Dict[str, Any]:
+        assert self._classifier is not None and self._device is not None
 
-        assert self._classifier is not None
+        if sample.device != self._device:
+            sample = sample.to(self._device)
+
+        if fdi_idx.device != self._device:
+            fdi_idx = fdi_idx.to(self._device)
 
         self._classifier.zero_grad(set_to_none=True)
 
-        sample = sample.clone().detach().requires_grad_(True)
+        with torch.enable_grad():
+            sample = sample.clone().detach().requires_grad_(True)
+            logits, feat, _ = self._classifier(
+                sample,
+                fdi_idx,
+                return_feat_for_cam=True,
+                return_aux=True,
+            )
+            probs = F.softmax(logits, dim=1)
+            target = probs[:, 1].sum()
+            grads = torch.autograd.grad(
+                target,
+                feat,
+                retain_graph=False,
+                create_graph=False,
+                allow_unused=False,
+            )[0]
 
-        logits, feat, _ = self._classifier(
+            if grads is None:
+                raise InferenceError("Unable to compute Grad-CAM gradients")
 
-            sample,
-
-            fdi_idx,
-
-            return_feat_for_cam=True,
-
-            return_aux=True,
-
-        )
-
-        probs = F.softmax(logits, dim=1)
-
-        target = probs[0, 1]
-
-        target.backward()
-
-        grad = feat.grad
-
-        if grad is None:
-
-            raise InferenceError("Unable to compute Grad-CAM gradients")
-
-        weights = grad.mean(dim=(2, 3), keepdim=True)
-
-        cam = torch.relu((weights * feat).sum(dim=1, keepdim=True))
+            weights = grads.mean(dim=(2, 3), keepdim=True)
+            cam = torch.relu((weights * feat).sum(dim=1, keepdim=True))
 
         cam = F.interpolate(
-
             cam,
-
             size=(original_patch.shape[0], original_patch.shape[1]),
-
             mode="bilinear",
-
             align_corners=False,
-
         )
 
-        cam = cam.squeeze().cpu().numpy()
+        cam = cam.squeeze().detach().cpu().numpy()
 
         cam_min, cam_max = cam.min(), cam.max()
 
         if cam_max > cam_min:
-
             cam = (cam - cam_min) / (cam_max - cam_min)
-
         else:
-
             cam = np.zeros_like(cam)
 
         heatmap = (cam * 255).astype(np.uint8)
@@ -733,4 +719,3 @@ def get_inference_engine(definition: ModelDefinition) -> CrossCamInference:
         _engine_cache[cache_key] = engine
 
         return engine
-
