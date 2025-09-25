@@ -38,6 +38,8 @@ const SEVERITY_TONE: Record<string, string> = {
 
 const MIN_SCALE = 0.35;
 const MAX_SCALE = 6;
+const MIN_ASSET_ZOOM = 0.6;
+const MAX_ASSET_ZOOM = 2.5;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
@@ -122,7 +124,6 @@ export default function AnalysisDetailWorkspace({
       setUseOverlay(false);
     }
   }, [preview?.overlay_uri]);
-
   useEffect(() => {
     setSelectedFindingId((current) => {
       if (
@@ -176,6 +177,11 @@ export default function AnalysisDetailWorkspace({
       {} as Record<string, string>
     );
   }, [selectedPreviewFinding?.assets]);
+  const [assetZoom, setAssetZoom] = useState(1);
+
+  useEffect(() => {
+    setAssetZoom(1);
+  }, [selectedFindingId]);
 
   const overlaySrc = resolveMediaUrl(preview?.overlay_uri ?? undefined);
   const baseImageCandidate =
@@ -322,6 +328,22 @@ export default function AnalysisDetailWorkspace({
     },
     [fitToScreen, hasInteracted]
   );
+
+  const handleAssetZoomChange = useCallback((value: number) => {
+    setAssetZoom((current) => {
+      if (!Number.isFinite(value)) {
+        return current;
+      }
+      return clamp(value, MIN_ASSET_ZOOM, MAX_ASSET_ZOOM);
+    });
+  }, []);
+
+  const adjustAssetZoom = useCallback((delta: number) => {
+    setAssetZoom((current) => {
+      const next = clamp(current + delta, MIN_ASSET_ZOOM, MAX_ASSET_ZOOM);
+      return Number.isFinite(next) ? Number(next.toFixed(2)) : current;
+    });
+  }, []);
 
   const handleWheel = useCallback(
     (event: WheelEvent<HTMLDivElement>) => {
@@ -579,7 +601,7 @@ export default function AnalysisDetailWorkspace({
                     onClick={zoomOut}
                     className="rounded-full border border-white/10 px-3 py-1 text-xs text-slate-200 transition hover:border-primary/50 hover:text-primary"
                   >
-                    − Zoom out
+                    - Zoom out
                   </button>
                   <button
                     type="button"
@@ -781,36 +803,92 @@ export default function AnalysisDetailWorkspace({
                 </div>
               ) : null}
               <div className="space-y-3">
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                  Visual assets
-                </p>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                    Visual assets
+                  </p>
+                  <div className="flex items-center gap-2 text-xs text-slate-300">
+                    <button
+                      type="button"
+                      onClick={() => adjustAssetZoom(-0.2)}
+                      className="rounded-full border border-white/15 px-2 py-1 text-slate-200 transition hover:border-primary/50 hover:text-primary"
+                    >
+                      -
+                    </button>
+                    <input
+                      type="range"
+                      min={MIN_ASSET_ZOOM}
+                      max={MAX_ASSET_ZOOM}
+                      step={0.05}
+                      value={assetZoom}
+                      onChange={(event) =>
+                        handleAssetZoomChange(Number(event.currentTarget.value))
+                      }
+                      className="h-1.5 w-32 accent-primary"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => adjustAssetZoom(0.2)}
+                      className="rounded-full border border-white/15 px-2 py-1 text-slate-200 transition hover:border-primary/50 hover:text-primary"
+                    >
+                      +
+                    </button>
+                    <span className="w-12 text-right text-slate-200">
+                      {Math.round(assetZoom * 100)}%
+                    </span>
+                  </div>
+                </div>
                 {selectedAssets.gradcam ? (
-                  <img
-                    src={selectedAssets.gradcam}
-                    alt="Grad-CAM heatmap"
-                    className="w-full rounded-2xl border border-white/10"
-                  />
+                  <div className="relative mx-auto max-h-[360px] w-full overflow-auto rounded-2xl border border-white/10 bg-slate-950/40 p-3">
+                    <img
+                      src={selectedAssets.gradcam}
+                      alt="Grad-CAM heatmap"
+                      className="mx-auto h-auto w-auto max-w-full rounded-xl"
+                      style={{
+                        transform: `scale(${assetZoom})`,
+                        transformOrigin: "top center",
+                      }}
+                    />
+                  </div>
                 ) : null}
                 {!selectedAssets.gradcam && selectedAssets.heatmap ? (
-                  <img
-                    src={selectedAssets.heatmap}
-                    alt="Heatmap"
-                    className="w-full rounded-2xl border border-white/10"
-                  />
+                  <div className="relative mx-auto max-h-[360px] w-full overflow-auto rounded-2xl border border-white/10 bg-slate-950/40 p-3">
+                    <img
+                      src={selectedAssets.heatmap}
+                      alt="Heatmap"
+                      className="mx-auto h-auto w-auto max-w-full rounded-xl"
+                      style={{
+                        transform: `scale(${assetZoom})`,
+                        transformOrigin: "top center",
+                      }}
+                    />
+                  </div>
                 ) : null}
                 {selectedAssets.mask ? (
-                  <img
-                    src={selectedAssets.mask}
-                    alt="Segmentation mask"
-                    className="w-full rounded-2xl border border-white/10"
-                  />
+                  <div className="relative mx-auto max-h-[360px] w-full overflow-auto rounded-2xl border border-white/10 bg-slate-950/40 p-3">
+                    <img
+                      src={selectedAssets.mask}
+                      alt="Segmentation mask"
+                      className="mx-auto h-auto w-auto max-w-full rounded-xl"
+                      style={{
+                        transform: `scale(${assetZoom})`,
+                        transformOrigin: "top center",
+                      }}
+                    />
+                  </div>
                 ) : null}
                 {selectedAssets.crop ? (
-                  <img
-                    src={selectedAssets.crop}
-                    alt="Tooth crop"
-                    className="w-full rounded-2xl border border-white/10"
-                  />
+                  <div className="relative mx-auto max-h-[360px] w-full overflow-auto rounded-2xl border border-white/10 bg-slate-950/40 p-3">
+                    <img
+                      src={selectedAssets.crop}
+                      alt="Tooth crop"
+                      className="mx-auto h-auto w-auto max-w-full rounded-xl"
+                      style={{
+                        transform: `scale(${assetZoom})`,
+                        transformOrigin: "top center",
+                      }}
+                    />
+                  </div>
                 ) : null}
                 {!selectedAssets.gradcam &&
                 !selectedAssets.heatmap &&

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { clsx } from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -204,7 +205,7 @@ export default function AnalysesWorkspace({
         </p>
       </header>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(280px,360px)_minmax(320px,1fr)_minmax(260px,320px)]">
+      <div className="grid gap-6 xl:grid-cols-[minmax(280px,360px)_minmax(320px,1fr)_minmax(320px,420px)]">
         <aside className="space-y-4">
           <h2 className="text-sm font-semibold text-slate-200">Analyses</h2>
           <div className="space-y-3 overflow-hidden rounded-3xl border border-white/5 bg-white/5 p-4">
@@ -260,7 +261,15 @@ export default function AnalysesWorkspace({
                 Bounding boxes and tooth predictions
               </p>
             </div>
-            <div className="flex items-center gap-2 text-xs">
+            <div className="flex flex-wrap items-center gap-2 text-xs justify-end">
+              {selectedAnalysis ? (
+                <Link
+                  href={`/analysis/${selectedAnalysis.id}`}
+                  className="inline-flex items-center gap-1 rounded-full border border-primary/60 bg-primary/20 px-3 py-1 font-semibold text-primary hover:bg-primary/30"
+                >
+                  查看分析詳情
+                </Link>
+              ) : null}
               <span
                 className={clsx(
                   "rounded-full px-3 py-1",
@@ -288,6 +297,14 @@ export default function AnalysesWorkspace({
             {imageSrc && preview ? (
               <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-[#0F172A] p-2">
                 <div className="relative" style={{ minHeight: 320 }}>
+                  {selectedAnalysis ? (
+                    <Link
+                      href={`/analysis/${selectedAnalysis.id}`}
+                      className="pointer-events-auto absolute right-4 top-4 z-20 rounded-full border border-primary/60 bg-primary/20 px-3 py-1 text-xs font-semibold text-primary backdrop-blur hover:bg-primary/30"
+                    >
+                      查看分析詳情
+                    </Link>
+                  ) : null}
                   <img
                     ref={imgRef}
                     src={imageSrc}
@@ -417,13 +434,13 @@ export default function AnalysesWorkspace({
                     <img
                       src={selectedAssets.gradcam}
                       alt="Grad-CAM heatmap"
-                      className="w-full rounded-2xl border border-white/10"
+                      className="mx-auto h-auto max-h-[360px] w-auto max-w-full rounded-2xl border border-white/10"
                     />
                   ) : selectedAssets.heatmap ? (
                     <img
                       src={selectedAssets.heatmap}
                       alt="Heatmap"
-                      className="w-full rounded-2xl border border-white/10"
+                      className="mx-auto h-auto max-h-[360px] w-auto max-w-full rounded-2xl border border-white/10"
                     />
                   ) : (
                     <div className="flex h-40 items-center justify-center rounded-2xl border border-dashed border-white/15 text-xs text-slate-400">
@@ -439,7 +456,7 @@ export default function AnalysesWorkspace({
                     <img
                       src={selectedAssets.crop}
                       alt="Tooth crop"
-                      className="w-full rounded-2xl border border-white/10"
+                      className="mx-auto h-auto max-h-[360px] w-auto max-w-full rounded-2xl border border-white/10"
                     />
                   </div>
                 ) : null}

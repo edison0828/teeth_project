@@ -494,6 +494,7 @@ class CrossCamInference:
         classes = boxes.cls.cpu().numpy().astype(int)
 
         patches: List[np.ndarray] = []
+        original_patches: List[np.ndarray] = []
         fdi_indices: List[int] = []
         meta: List[Dict[str, Any]] = []
 
@@ -519,6 +520,7 @@ class CrossCamInference:
             if crop.size == 0:
                 continue
 
+            original_patches.append(crop.copy())
             resized = cv2.resize(crop, (224, 224), interpolation=cv2.INTER_AREA)
             patches.append(resized)
             fdi_indices.append(self._fdi_to_index[fdi_label])
@@ -587,14 +589,15 @@ class CrossCamInference:
 
             assets: Dict[str, Optional[str]] = {}
             if output_dir is not None:
+                original_patch = original_patches[idx]
                 crop_path = output_dir / f"{finding_id}_crop.png"
-                cv2.imwrite(str(crop_path), patches[idx])
+                cv2.imwrite(str(crop_path), original_patch)
                 assets["crop"] = self._to_public_uri(crop_path)
                 try:
                     gradcam = self._compute_gradcam(
                         batch[idx : idx + 1],
                         fdi_tensor[idx : idx + 1],
-                        patches[idx],
+                        original_patch,
                     )
                 except Exception:
                     gradcam = None
