@@ -35,6 +35,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState<boolean>(true);
   const [guestMode, setGuestMode] = useState<boolean>(false);
 
+  const [guestMode, setGuestMode] = useState<boolean>(false);
+
+
   const router = useRouter();
   const pathname = usePathname();
 
@@ -49,6 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refresh = useCallback(async (): Promise<UserProfile | null> => {
+
     const persistedGuest =
       typeof window !== "undefined" && window.localStorage.getItem(GUEST_MODE_KEY) === "1";
 
