@@ -10,7 +10,14 @@ import { useAuth } from "../../contexts/AuthContext";
 
 export default function LoginForm() {
   const router = useRouter();
-  const { refresh, token: activeToken, loading: authLoading } = useAuth();
+  const {
+    refresh,
+    token: activeToken,
+    loading: authLoading,
+    guestMode,
+    enterGuestMode,
+    exitGuestMode,
+  } = useAuth();
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
   const [status, setStatus] = useState<string>("");
@@ -35,6 +42,7 @@ export default function LoginForm() {
     try {
       const token = await loginUser(email.trim(), password);
       persistToken(token.access_token, token.expires_in);
+      exitGuestMode();
       await refresh();
       setStatus("登入成功，稍後自動導向");
       router.replace("/");
@@ -44,6 +52,15 @@ export default function LoginForm() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleGuestMode = () => {
+    if (loading) {
+      return;
+    }
+    enterGuestMode();
+    setStatus("已啟用示範模式，即將導向體驗儀表板。");
+    router.replace("/");
   };
 
   return (
@@ -73,7 +90,17 @@ export default function LoginForm() {
             className="mt-2 w-full rounded-xl border border-white/10 bg-[#0B142A] px-3 py-2"
           />
         </div>
-        {status && <p className={`text-xs ${status.includes("成功") ? "text-accent" : "text-red-400"}`}>{status}</p>}
+        {status && (
+          <p
+            className={`text-xs ${
+              status.includes("成功") || status.includes("啟用")
+                ? "text-accent"
+                : "text-red-400"
+            }`}
+          >
+            {status}
+          </p>
+        )}
         <button
           type="submit"
           disabled={loading}
@@ -82,6 +109,13 @@ export default function LoginForm() {
           {loading ? "登入中..." : "登入"}
         </button>
       </form>
+      <button
+        type="button"
+        onClick={handleGuestMode}
+        className="mt-4 w-full rounded-full border border-white/10 bg-transparent px-4 py-3 text-sm font-semibold text-slate-100 transition hover:border-primary hover:text-primary"
+      >
+        {guestMode ? "繼續體驗示範模式" : "不登入，直接試用示範模式"}
+      </button>
       <p className="mt-6 text-center text-xs text-slate-400">
         還沒有帳號嗎？
         <Link className="ml-1 text-primary" href="/register">

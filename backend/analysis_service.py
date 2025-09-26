@@ -74,6 +74,7 @@ def process_analysis_job(analysis_id: str) -> None:
 
         definition = ModelDefinition(
             model_id=model_config.id,
+            model_type=getattr(model_config, "model_type", "cross_attn"),
             detector_path=Path(model_config.detector_path),
             classifier_path=Path(model_config.classifier_path),
             detector_threshold=model_config.detector_threshold,

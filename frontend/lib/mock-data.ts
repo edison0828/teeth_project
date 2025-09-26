@@ -20,7 +20,7 @@ export const fallbackDashboard: DashboardOverview = {
   system_status: {
     pending_images: 2,
     new_reports: 3,
-    models_active: 4,
+    models_active: 2,
     active_model_name: "Mock Model v1",
     last_synced: nowIso
   },
@@ -262,12 +262,27 @@ export const fallbackModels: ModelConfig[] = [
     id: "MODEL-MOCK",
     name: "Mock Model v1",
     description: "Default mock configuration for offline mode",
+    model_type: "cross_attn",
     detector_path: "models/fdi_all seg.pt",
     classifier_path: "models/cross_attn_fdi_camAlignA.pth",
     detector_threshold: 0.25,
     classification_threshold: 0.5,
     max_teeth: 64,
     is_active: true,
+    created_at: nowIso,
+    updated_at: nowIso
+  },
+  {
+    id: "MODEL-MOCK-YOLO",
+    name: "YOLO Caries Demo",
+    description: "Demo configuration for direct caries detection",
+    model_type: "yolo_caries",
+    detector_path: "models/fdi_all seg.pt",
+    classifier_path: "models/yolo_caries.pt",
+    detector_threshold: 0.2,
+    classification_threshold: 0.4,
+    max_teeth: 64,
+    is_active: false,
     created_at: nowIso,
     updated_at: nowIso
   }

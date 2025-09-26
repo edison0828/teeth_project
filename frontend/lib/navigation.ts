@@ -39,6 +39,7 @@ export function getSidebarNavItems(metrics: NavigationMetrics = {}): SidebarNavI
     },
     { label: "Notifications", href: "/notifications" },
     { label: "Reports", href: "/reports" },
+    { label: "Models", href: "/models" },
   ];
 }
 
@@ -48,6 +49,7 @@ export function getTopNavItems(user?: UserProfile | null): TopNavItem[] {
     { label: "Patients", href: "/patients", activeStartsWith: "/patients" },
     { label: "Image Upload", href: "/image-upload", activeStartsWith: "/image-upload" },
     { label: "Analyses", href: "/analyses", activeStartsWith: "/analysis" },
+    { label: "Models", href: "/models", activeStartsWith: "/models" },
     { label: "Settings", href: "/settings", activeStartsWith: "/settings" },
     { label: "Help", href: "/help", activeStartsWith: "/help" },
   ];

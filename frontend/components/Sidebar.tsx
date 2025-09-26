@@ -11,20 +11,15 @@ import { getSidebarNavItems, type NavigationMetrics } from "../lib/navigation";
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const { token } = useAuth();
+  const { token, guestMode } = useAuth();
   const [metrics, setMetrics] = useState<NavigationMetrics>({});
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadMetrics() {
-      if (!token) {
-        setMetrics({});
-        return;
-      }
-
       try {
-        const overview = await fetchDashboardOverview(token);
+        const overview = await fetchDashboardOverview(token ?? undefined);
         if (cancelled) {
           return;
         }
@@ -41,12 +36,19 @@ export default function Sidebar() {
       }
     }
 
+    if (!token && !guestMode) {
+      setMetrics({});
+      return () => {
+        cancelled = true;
+      };
+    }
+
     loadMetrics();
 
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, guestMode]);
 
   const navigation = useMemo(() => getSidebarNavItems(metrics), [metrics]);
 
