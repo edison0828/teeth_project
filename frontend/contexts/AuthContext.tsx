@@ -1,6 +1,13 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import type { ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { fetchCurrentUser, logoutUser } from "../lib/api";
@@ -26,7 +33,9 @@ const AUTH_ROUTES = ["/login", "/register"];
 const GUEST_MODE_KEY = "dentamind-guest-mode";
 
 function isAuthRoute(pathname: string): boolean {
-  return AUTH_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`));
+  return AUTH_ROUTES.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`)
+  );
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -34,9 +43,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [guestMode, setGuestMode] = useState<boolean>(false);
-
-  const [guestMode, setGuestMode] = useState<boolean>(false);
-
 
   const router = useRouter();
   const pathname = usePathname();
@@ -52,9 +58,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refresh = useCallback(async (): Promise<UserProfile | null> => {
-
     const persistedGuest =
-      typeof window !== "undefined" && window.localStorage.getItem(GUEST_MODE_KEY) === "1";
+      typeof window !== "undefined" &&
+      window.localStorage.getItem(GUEST_MODE_KEY) === "1";
 
     if (persistedGuest && !guestMode) {
       setGuestMode(true);
@@ -162,7 +168,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       enterGuestMode,
       exitGuestMode,
     }),
-    [token, user, loading, refresh, logout, guestMode, enterGuestMode, exitGuestMode]
+    [
+      token,
+      user,
+      loading,
+      refresh,
+      logout,
+      guestMode,
+      enterGuestMode,
+      exitGuestMode,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
