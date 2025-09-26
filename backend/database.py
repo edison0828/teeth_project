@@ -152,6 +152,7 @@ class ModelConfig(Base):
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
+    model_type: Mapped[str] = mapped_column(String(40), default="cross_attn")
     detector_path: Mapped[str] = mapped_column(String(255), nullable=False)
     classifier_path: Mapped[str] = mapped_column(String(255), nullable=False)
     detector_threshold: Mapped[float] = mapped_column(Float, default=0.25)

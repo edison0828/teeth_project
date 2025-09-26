@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "../contexts/AuthContext";
 import { getTopNavItems } from "../lib/navigation";
+import { fetchModels } from "../lib/api";
 
 function getInitials(nameOrEmail: string | undefined | null): string {
   if (!nameOrEmail) {
@@ -32,11 +33,27 @@ function getInitials(nameOrEmail: string | undefined | null): string {
   return alias.slice(0, 2).toUpperCase() || "U";
 }
 
+function describeModelType(modelType?: string | null): string {
+  switch (modelType) {
+    case "cross_attn":
+      return "Teeth detection + classifier";
+    case "yolo_caries":
+      return "Direct YOLO caries";
+    default:
+      return "Model not specified";
+  }
+}
+
 export default function TopNav() {
   const pathname = usePathname();
-  const { user, logout } = useAuth();
+  const { user, logout, token, guestMode } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const [modelInfo, setModelInfo] = useState<{
+    activeName: string;
+    activeType: string | null;
+    count: number;
+  } | null>(null);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -54,6 +71,40 @@ export default function TopNav() {
   }, [menuOpen]);
 
   const navItems = useMemo(() => getTopNavItems(user), [user]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadModels() {
+      try {
+        const models = await fetchModels(token ?? undefined);
+        if (cancelled) {
+          return;
+        }
+        if (!models || models.length === 0) {
+          setModelInfo(null);
+          return;
+        }
+        const active = models.find((model) => model.is_active) ?? models[0];
+        setModelInfo({
+          activeName: active.name,
+          activeType: active.model_type,
+          count: models.length,
+        });
+      } catch (error) {
+        if (!cancelled) {
+          setModelInfo(null);
+        }
+        console.warn("Unable to load model summary", error);
+      }
+    }
+
+    loadModels();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token, guestMode]);
 
   const displayName = user?.full_name?.trim() || user?.email || "已登入使用者";
   const subtitle =
@@ -88,9 +139,20 @@ export default function TopNav() {
         })}
       </div>
       <div className="ml-auto flex items-center gap-6 text-sm">
-        <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-slate-300 md:flex">
-          <span className="text-xs uppercase tracking-wide text-slate-400">Models</span>
-          <span className="rounded-full bg-primary/20 px-2 py-0.5 text-primary-subtle">4 active</span>
+        <div className="hidden items-center gap-3 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-slate-300 md:flex">
+          <div className="flex flex-col leading-tight">
+            <span className="text-[10px] uppercase tracking-wide text-slate-400">Active Model</span>
+            <span className="text-sm font-semibold text-white">
+              {modelInfo?.activeName ?? (guestMode ? "Demo 模型" : "未設定")}
+            </span>
+            <span className="text-[10px] text-slate-500">
+              {modelInfo
+                ? `${describeModelType(modelInfo.activeType)} · ${modelInfo.count} models`
+                : guestMode
+                ? "使用離線示範資料"
+                : "請於模型頁面設定"}
+            </span>
+          </div>
         </div>
         <div className="relative" ref={menuRef}>
           <button

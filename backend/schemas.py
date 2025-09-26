@@ -157,6 +157,7 @@ class ImageUploadResponse(BaseModel):
 class ModelConfigBase(BaseModel):
     name: str
     description: Optional[str] = None
+    model_type: Literal["cross_attn", "yolo_caries"] = "cross_attn"
     detector_path: str
     classifier_path: str
     detector_threshold: float = Field(0.25, ge=0, le=1)
@@ -171,6 +172,7 @@ class ModelConfigCreate(ModelConfigBase):
 class ModelConfigUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    model_type: Optional[Literal["cross_attn", "yolo_caries"]] = None
     detector_path: Optional[str] = None
     classifier_path: Optional[str] = None
     detector_threshold: Optional[float] = Field(None, ge=0, le=1)
