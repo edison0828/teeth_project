@@ -33,15 +33,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
-  const [guestMode, setGuestMode] = useState<boolean>(() => {
-    if (typeof window === "undefined") {
-      return false;
-    }
-    return window.localStorage.getItem(GUEST_MODE_KEY) === "1";
-  });
+
+  const [guestMode, setGuestMode] = useState<boolean>(false);
+
 
   const router = useRouter();
   const pathname = usePathname();
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const persisted = window.localStorage.getItem(GUEST_MODE_KEY) === "1";
+    if (persisted) {
+      setGuestMode(true);
+    }
+  }, []);
 
   const refresh = useCallback(async (): Promise<UserProfile | null> => {
     if (guestMode) {
