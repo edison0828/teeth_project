@@ -33,7 +33,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+
   const [guestMode, setGuestMode] = useState<boolean>(false);
+
 
   const router = useRouter();
   const pathname = usePathname();
