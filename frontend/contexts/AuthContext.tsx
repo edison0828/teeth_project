@@ -33,6 +33,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [guestMode, setGuestMode] = useState<boolean>(false);
 
   const [guestMode, setGuestMode] = useState<boolean>(false);
 
@@ -51,7 +52,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refresh = useCallback(async (): Promise<UserProfile | null> => {
-    if (guestMode) {
+
+    const persistedGuest =
+      typeof window !== "undefined" && window.localStorage.getItem(GUEST_MODE_KEY) === "1";
+
+    if (persistedGuest && !guestMode) {
+      setGuestMode(true);
+    }
+
+    if (guestMode || persistedGuest) {
       setToken(null);
       setUser(null);
       setLoading(false);

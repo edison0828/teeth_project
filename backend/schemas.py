@@ -155,6 +155,7 @@ class ImageUploadResponse(BaseModel):
 
 
 class ModelConfigBase(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
     name: str
     description: Optional[str] = None
     model_type: Literal["cross_attn", "yolo_caries"] = "cross_attn"

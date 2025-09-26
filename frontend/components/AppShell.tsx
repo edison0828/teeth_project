@@ -14,7 +14,7 @@ function isAuthRoute(pathname: string): boolean {
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { loading, user } = useAuth();
+  const { loading, user, guestMode } = useAuth();
 
   if (isAuthRoute(pathname)) {
     return (
@@ -24,7 +24,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  if (loading || !user) {
+  if (loading || (!user && !guestMode)) {
     return (
       <div className="flex min-h-screen items-center justify-center text-sm text-slate-300">
         驗證中...
