@@ -19,6 +19,7 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
 )
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
 
@@ -162,10 +163,30 @@ class ModelConfig(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+def _ensure_model_config_schema(connection) -> None:
+    """Ensure the ``model_configs`` table contains expected columns."""
+
+    inspector = inspect(connection)
+    if "model_configs" not in inspector.get_table_names():
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("model_configs")}
+    if "model_type" not in existing_columns:
+        connection.execute(
+            text("ALTER TABLE model_configs ADD COLUMN model_type VARCHAR(40) DEFAULT 'cross_attn'")
+        )
+        connection.execute(
+            text("UPDATE model_configs SET model_type = 'cross_attn' WHERE model_type IS NULL")
+        )
+
+
 def init_db() -> None:
-    """Create database tables if they do not already exist."""
+    """Create database tables if they do not already exist and run lightweight migrations."""
 
     Base.metadata.create_all(bind=engine)
+
+    with engine.begin() as connection:
+        _ensure_model_config_schema(connection)
 
 
 def get_session() -> Generator[Session, None, None]:
