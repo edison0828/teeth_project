@@ -1,6 +1,4 @@
-import { fetchModels } from "../../lib/api";
-import { readServerToken } from "../../lib/server-auth";
-import ModelManager from "./ModelManager";
+import Link from "next/link";
 
 const toggles = [
   { id: "notify-email", label: "電子郵件通知", description: "有新的 AI 分析或報告時透過 email 提醒。" },
@@ -8,15 +6,7 @@ const toggles = [
   { id: "auto-assign", label: "自動指派分析", description: "新影像上傳後自動指派至待命醫師。" }
 ];
 
-export default async function SettingsPage() {
-  const token = readServerToken();
-
-  if (!token) {
-    return null;
-  }
-  const models = await fetchModels(token);
-
-
+export default function SettingsPage() {
   return (
     <div className="space-y-8">
       <header className="rounded-3xl bg-white/5 px-8 py-10 text-white shadow-card">
@@ -48,10 +38,25 @@ export default async function SettingsPage() {
         </div>
         <div className="rounded-3xl bg-white/5 p-6 shadow-card">
           <h2 className="text-lg font-semibold text-white">模型管理</h2>
-          <p className="mt-1 text-sm text-slate-300">檢視或切換當前使用的推論權重，並新增替代模型設定。</p>
-          <div className="mt-5">
-            <ModelManager initialModels={models} />
-          </div>
+          <p className="mt-1 text-sm text-slate-300">
+            管理牙位與齲齒偵測模型，切換不同權重或調整門檻設定。支援 Cross-Attn 及直接 YOLO 偵測流程。
+          </p>
+          <ul className="mt-4 space-y-2 text-xs text-slate-300">
+            <li className="flex items-start gap-2 rounded-2xl border border-white/10 bg-[#0B142A] px-3 py-2">
+              <span className="mt-1 h-2 w-2 rounded-full bg-primary"></span>
+              <span>Cross-Attn：牙位 YOLO 偵測 + 單牙交叉注意力分類。</span>
+            </li>
+            <li className="flex items-start gap-2 rounded-2xl border border-white/10 bg-[#0B142A] px-3 py-2">
+              <span className="mt-1 h-2 w-2 rounded-full bg-accent"></span>
+              <span>YOLO 齲齒：直接輸出病灶框，並自動對應 FDI 牙位。</span>
+            </li>
+          </ul>
+          <Link
+            href="/models"
+            className="mt-5 inline-flex items-center justify-center rounded-full bg-gradient-to-r from-primary to-accent px-4 py-3 text-sm font-semibold text-slate-900 shadow-lg shadow-primary/40"
+          >
+            開啟模型管理中心
+          </Link>
         </div>
       </section>
     </div>
