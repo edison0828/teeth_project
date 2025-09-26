@@ -15,11 +15,15 @@ type AuthContextValue = {
   logout: () => Promise<void>;
   setToken: (accessToken: string | null) => void;
   setUser: (profile: UserProfile | null) => void;
+  guestMode: boolean;
+  enterGuestMode: () => void;
+  exitGuestMode: () => void;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 const AUTH_ROUTES = ["/login", "/register"];
+const GUEST_MODE_KEY = "dentamind-guest-mode";
 
 function isAuthRoute(pathname: string): boolean {
   return AUTH_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`));
@@ -29,11 +33,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [guestMode, setGuestMode] = useState<boolean>(false);
 
   const router = useRouter();
   const pathname = usePathname();
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const persisted = window.localStorage.getItem(GUEST_MODE_KEY) === "1";
+    if (persisted) {
+      setGuestMode(true);
+    }
+  }, []);
+
   const refresh = useCallback(async (): Promise<UserProfile | null> => {
+    if (guestMode) {
+      setToken(null);
+      setUser(null);
+      setLoading(false);
+      return null;
+    }
+
     const stored = readToken();
 
     if (!stored) {
@@ -63,7 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, [token, user]);
+  }, [token, user, guestMode]);
 
   useEffect(() => {
     refresh();
@@ -74,12 +96,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    if (!token && !isAuthRoute(pathname)) {
+    if (!token && !guestMode && !isAuthRoute(pathname)) {
       router.replace("/login");
-    } else if (token && isAuthRoute(pathname)) {
+    } else if ((token || guestMode) && isAuthRoute(pathname)) {
       router.replace("/");
     }
-  }, [token, loading, pathname, router]);
+  }, [token, guestMode, loading, pathname, router]);
+
+  const enterGuestMode = useCallback(() => {
+    clearToken();
+    setToken(null);
+    setUser(null);
+    setGuestMode(true);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(GUEST_MODE_KEY, "1");
+    }
+    setLoading(false);
+  }, []);
+
+  const exitGuestMode = useCallback(() => {
+    setGuestMode(false);
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(GUEST_MODE_KEY);
+    }
+  }, []);
 
   const logout = useCallback(async () => {
     if (token) {
@@ -92,8 +132,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearToken();
     setToken(null);
     setUser(null);
+    if (guestMode) {
+      exitGuestMode();
+    }
     router.push("/login");
-  }, [token, router]);
+  }, [token, guestMode, exitGuestMode, router]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -104,8 +147,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       setUser,
       setToken,
+      guestMode,
+      enterGuestMode,
+      exitGuestMode,
     }),
-    [token, user, loading, refresh, logout]
+    [token, user, loading, refresh, logout, guestMode, enterGuestMode, exitGuestMode]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

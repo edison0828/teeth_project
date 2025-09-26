@@ -81,10 +81,13 @@ export interface ImageUploadResponse {
   analysis_id?: string | null;
 }
 
+export type ModelType = "cross_attn" | "yolo_caries";
+
 export interface ModelConfig {
   id: string;
   name: string;
   description?: string | null;
+  model_type: ModelType;
   detector_path: string;
   classifier_path: string;
   detector_threshold: number;
@@ -98,6 +101,7 @@ export interface ModelConfig {
 export interface ModelConfigCreateRequest {
   name: string;
   description?: string | null;
+  model_type: ModelType;
   detector_path: string;
   classifier_path: string;
   detector_threshold: number;
