@@ -2,12 +2,6 @@
 
 from __future__ import annotations
 
-
-
-import math
-
-import shutil
-
 import threading
 
 from collections import Counter
@@ -31,6 +25,7 @@ import numpy as np
 import torch
 
 import torch.nn.functional as F
+from torchvision import transforms
 
 
 
@@ -126,6 +121,8 @@ class BaseInference:
     def __init__(self) -> None:
         self._root = Path(__file__).resolve().parent.parent
         self._uploads_root = self._root / "uploaded_images"
+        self._transform: Optional[transforms.Compose] = None
+        self._fdi_to_index: Dict[str, int] = {}
 
     def _resolve_path(self, path: Path) -> Path:
         return path if path.is_absolute() else (self._root / path).resolve()
@@ -205,6 +202,58 @@ class BaseInference:
             "overlay": overlay,
 
         }
+
+    def _ensure_output_dir(self, analysis_id: str) -> Path:
+        base_dir = (self._uploads_root / "analysis").resolve()
+        base_dir.mkdir(parents=True, exist_ok=True)
+
+        candidate = (base_dir / analysis_id).resolve()
+        if base_dir not in candidate.parents and candidate != base_dir:
+            raise ValueError("Invalid analysis identifier")
+
+        candidate.mkdir(parents=True, exist_ok=True)
+        return candidate
+
+    def _to_public_uri(self, path: Optional[Path | str]) -> Optional[str]:
+        if path is None:
+            return None
+
+        path_str = str(path)
+        if path_str.startswith(("http://", "https://")):
+            return path_str
+        if path_str.startswith("/"):
+            return path_str
+
+        candidate = Path(path_str)
+        try:
+            relative = candidate.resolve().relative_to(self._uploads_root.resolve())
+        except Exception:
+            return candidate.as_posix()
+
+        return f"/uploaded_images/{relative.as_posix()}"
+
+    @staticmethod
+    def _severity_from_probability(probability: float) -> str:
+        if probability >= 0.85:
+            return "severe"
+        if probability >= 0.6:
+            return "moderate"
+        return "mild"
+
+    def _prepare_batch(self, patches: Iterable[np.ndarray], _: Iterable[int]) -> torch.Tensor:
+        if self._transform is None:
+            raise InferenceError("分類模型尚未初始化，無法進行推論")
+
+        tensors: List[torch.Tensor] = []
+        for patch in patches:
+            rgb_patch = cv2.cvtColor(patch, cv2.COLOR_BGR2RGB)
+            tensor = self._transform(rgb_patch)
+            tensors.append(tensor)
+
+        if not tensors:
+            raise InferenceError("缺少可用的牙齒影像區塊")
+
+        return torch.stack(tensors, dim=0)
 
 
 
@@ -456,6 +505,253 @@ class BaseInference:
         summary = f"偵測到 {len(serialized_findings)} 顆疑似齲齒 (平均信心 {aggregate_conf:.2f})"
 
         return build_response(serialized_findings, detected_conditions, summary, aggregate_conf)
+
+
+
+class CrossCamInference(BaseInference):
+
+    """Cross-attention classifier with YOLO tooth detector."""
+
+    _MODEL_KWARGS = {"fdi_dim", "attn_dim", "heads", "num_queries", "use_film", "use_se"}
+
+    def __init__(
+        self,
+        detector_path: Path,
+        classifier_path: Path,
+        *,
+        conf_threshold: float = 0.25,
+        caries_threshold: float = 0.5,
+        max_teeth: int = 64,
+    ) -> None:
+        super().__init__()
+        self.detector_path = self._resolve_path(detector_path)
+        self.classifier_path = self._resolve_path(classifier_path)
+        self.conf_threshold = conf_threshold
+        self.caries_threshold = caries_threshold
+        self.max_teeth = max_teeth
+
+        self._lock = threading.Lock()
+        self._device: Optional[torch.device] = None
+        self._detector = None
+        self._classifier = None
+
+        self._transform = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225],
+                ),
+            ]
+        )
+
+    def _ensure_models(self) -> None:
+        if self._detector is not None and self._classifier is not None:
+            return
+
+        with self._lock:
+            if self._device is None:
+                self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+            if self._detector is None:
+                try:
+                    from ultralytics import YOLO
+                except ImportError as exc:  # pragma: no cover - runtime dependency
+                    raise InferenceError("缺少 ultralytics 套件，無法啟動牙齒偵測模型") from exc
+
+                if not self.detector_path.exists():
+                    raise InferenceError(f"偵測模型不存在: {self.detector_path}")
+
+                self._detector = YOLO(str(self.detector_path))
+                if hasattr(self._detector, "fuse"):
+                    try:
+                        self._detector.fuse()
+                    except Exception:  # pragma: no cover - best effort fuse
+                        pass
+
+            if self._classifier is None:
+                if not self.classifier_path.exists():
+                    raise InferenceError(f"齲齒分類模型不存在: {self.classifier_path}")
+
+                checkpoint = torch.load(
+                    str(self.classifier_path),
+                    map_location="cpu",
+                )
+                state_dict = self._extract_state_dict(checkpoint)
+                metadata = self._extract_metadata(checkpoint)
+                model_kwargs = {
+                    key: metadata[key]
+                    for key in self._MODEL_KWARGS
+                    if key in metadata
+                }
+                num_fdi = self._infer_num_fdi(state_dict)
+
+                classifier = build_cross_attn_fdi(num_fdi=num_fdi, **model_kwargs)
+                try:
+                    classifier.load_state_dict(state_dict, strict=True)
+                except RuntimeError:
+                    classifier.load_state_dict(state_dict, strict=False)
+                classifier.to(self._device)
+                classifier.eval()
+                self._classifier = classifier
+
+                mapping = self._extract_fdi_mapping(checkpoint)
+                if not mapping:
+                    mapping = self._build_mapping_from_detector(num_fdi)
+                mapping = self._normalise_mapping(mapping, num_fdi)
+                if not mapping:
+                    mapping = self._sequential_mapping(num_fdi)
+                self._fdi_to_index = self._expand_with_synonyms(mapping)
+
+    @staticmethod
+    def _extract_state_dict(checkpoint: Any) -> Dict[str, torch.Tensor]:
+        if isinstance(checkpoint, dict):
+            for key in ("state_dict", "model_state", "model", "net"):
+                value = checkpoint.get(key)
+                if isinstance(value, dict):
+                    return value
+            if all(isinstance(k, str) for k in checkpoint.keys()):
+                return checkpoint  # already a state dict
+        if isinstance(checkpoint, torch.nn.Module):
+            return checkpoint.state_dict()
+        if isinstance(checkpoint, (list, tuple)):
+            raise InferenceError("不支援的分類模型格式：列表/元組")
+        if not isinstance(checkpoint, dict):
+            raise InferenceError("無法讀取分類模型權重")
+        return checkpoint
+
+    @staticmethod
+    def _extract_metadata(checkpoint: Any) -> Dict[str, Any]:
+        if not isinstance(checkpoint, dict):
+            return {}
+        metadata: Dict[str, Any] = {}
+        meta = checkpoint.get("metadata")
+        if isinstance(meta, dict):
+            metadata.update(meta)
+        config = checkpoint.get("config")
+        if isinstance(config, dict):
+            metadata.update(config)
+        return metadata
+
+    @staticmethod
+    def _infer_num_fdi(state_dict: Dict[str, torch.Tensor]) -> int:
+        for key in ("fdi_emb.weight", "module.fdi_emb.weight"):
+            if key in state_dict:
+                weight = state_dict[key]
+                if hasattr(weight, "shape"):
+                    return int(weight.shape[0])
+        for key, value in state_dict.items():
+            if key.endswith("fdi_emb.weight") and hasattr(value, "shape"):
+                return int(value.shape[0])
+        raise InferenceError("無法從分類模型檔案推斷 FDI 種類數")
+
+    def _extract_fdi_mapping(self, checkpoint: Any) -> Dict[str, int]:
+        if not isinstance(checkpoint, dict):
+            return {}
+
+        candidates: List[Any] = []
+        for key in ("fdi_to_idx", "fdi_to_index", "fdi_mapping"):
+            if key in checkpoint:
+                candidates.append(checkpoint[key])
+
+        metadata = self._extract_metadata(checkpoint)
+        for key in ("fdi_to_idx", "fdi_to_index", "fdi_mapping", "idx_to_fdi", "fdi_labels"):
+            if key in metadata:
+                candidates.append(metadata[key])
+
+        for raw in candidates:
+            mapping = self._normalise_raw_mapping(raw)
+            if mapping:
+                return mapping
+
+        return {}
+
+    @staticmethod
+    def _normalise_raw_mapping(raw: Any) -> Dict[str, int]:
+        if isinstance(raw, dict):
+            result: Dict[str, int] = {}
+            for key, value in raw.items():
+                try:
+                    idx = int(value)
+                except (TypeError, ValueError):
+                    continue
+                result[str(key)] = idx
+            return result
+        if isinstance(raw, (list, tuple)):
+            return {str(item): idx for idx, item in enumerate(raw)}
+        return {}
+
+    def _build_mapping_from_detector(self, num_fdi: int) -> Dict[str, int]:
+        names_source = getattr(self._detector, "names", None)
+        labels: List[str] = []
+        if isinstance(names_source, dict):
+            labels = [str(name) for _, name in sorted(names_source.items(), key=lambda item: item[0])]
+        elif isinstance(names_source, list):
+            labels = [str(name) for name in names_source]
+
+        labels = [label.strip() for label in labels if label]
+        seen: Dict[str, None] = {}
+        unique_labels: List[str] = []
+        for label in labels:
+            if label not in seen:
+                seen[label] = None
+                unique_labels.append(label)
+
+        if len(unique_labels) < num_fdi:
+            unique_labels = self._default_fdi_codes(num_fdi)
+
+        return {label: idx for idx, label in enumerate(unique_labels[:num_fdi])}
+
+    @staticmethod
+    def _normalise_mapping(mapping: Dict[str, int], num_fdi: int) -> Dict[str, int]:
+        filtered = {str(key): int(value) for key, value in mapping.items() if 0 <= int(value) < num_fdi}
+        if len(filtered) == num_fdi:
+            return filtered
+        if not filtered:
+            return {}
+        if len(filtered) > num_fdi:
+            grouped: Dict[int, List[str]] = {}
+            for label, idx in filtered.items():
+                grouped.setdefault(idx, []).append(label)
+            if len(grouped) == num_fdi and all(idx in grouped for idx in range(num_fdi)):
+                result: Dict[str, int] = {}
+                for idx in range(num_fdi):
+                    for label in grouped[idx]:
+                        result[label] = idx
+                if result:
+                    return result
+        ordered = sorted(filtered.items(), key=lambda item: item[1])
+        if len(ordered) == num_fdi:
+            return {key: idx for idx, (key, _) in enumerate(ordered)}
+        return {}
+
+    @staticmethod
+    def _sequential_mapping(num_fdi: int) -> Dict[str, int]:
+        return {str(code): idx for idx, code in enumerate(CrossCamInference._default_fdi_codes(num_fdi))}
+
+    @staticmethod
+    def _default_fdi_codes(num_fdi: int) -> List[str]:
+        permanent = [f"{quadrant}{tooth}" for quadrant in (1, 2, 3, 4) for tooth in range(1, 9)]
+        primary = [f"{quadrant}{tooth}" for quadrant in (5, 6, 7, 8) for tooth in range(1, 6)]
+        codes = permanent + primary
+        if num_fdi > len(codes):
+            extra = [str(idx) for idx in range(num_fdi - len(codes))]
+            codes.extend(extra)
+        return codes[:num_fdi]
+
+    @staticmethod
+    def _expand_with_synonyms(mapping: Dict[str, int]) -> Dict[str, int]:
+        expanded = dict(mapping)
+        for label, idx in list(mapping.items()):
+            if label.startswith("FDI-"):
+                bare = label[4:]
+                if bare and bare not in expanded:
+                    expanded[bare] = idx
+            else:
+                prefixed = f"FDI-{label}"
+                if prefixed not in expanded:
+                    expanded[prefixed] = idx
+        return expanded
 
 
 
