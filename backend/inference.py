@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 
-from collections import Counter
+from collections import Counter, OrderedDict
 
 from dataclasses import dataclass
 
@@ -578,6 +578,7 @@ class CrossCamInference(BaseInference):
                     map_location="cpu",
                 )
                 state_dict = self._extract_state_dict(checkpoint)
+                state_dict = self._normalise_state_dict_keys(state_dict)
                 metadata = self._extract_metadata(checkpoint)
                 model_kwargs = {
                     key: metadata[key]
@@ -589,8 +590,19 @@ class CrossCamInference(BaseInference):
                 classifier = build_cross_attn_fdi(num_fdi=num_fdi, **model_kwargs)
                 try:
                     classifier.load_state_dict(state_dict, strict=True)
-                except RuntimeError:
-                    classifier.load_state_dict(state_dict, strict=False)
+                except RuntimeError as exc:
+                    incompatibilities = classifier.load_state_dict(state_dict, strict=False)
+                    missing = sorted(incompatibilities.missing_keys)
+                    unexpected = sorted(incompatibilities.unexpected_keys)
+                    details = []
+                    if missing:
+                        details.append(f"缺少權重: {', '.join(missing)}")
+                    if unexpected:
+                        details.append(f"多餘權重: {', '.join(unexpected)}")
+                    message = "分類模型權重載入失敗"
+                    if details:
+                        message = f"{message}（{'；'.join(details)}）"
+                    raise InferenceError(message) from exc
                 classifier.to(self._device)
                 classifier.eval()
                 self._classifier = classifier
@@ -619,6 +631,28 @@ class CrossCamInference(BaseInference):
         if not isinstance(checkpoint, dict):
             raise InferenceError("無法讀取分類模型權重")
         return checkpoint
+
+    @staticmethod
+    def _normalise_state_dict_keys(
+        state_dict: Dict[str, torch.Tensor]
+    ) -> Dict[str, torch.Tensor]:
+        if not state_dict:
+            return state_dict
+
+        items = []
+        seen = set()
+        for key, value in state_dict.items():
+            new_key = key
+            while new_key.startswith("module."):
+                new_key = new_key[len("module.") :]
+            if new_key in seen:
+                raise InferenceError(f"分類模型包含重複權重鍵：{new_key}")
+            seen.add(new_key)
+            items.append((new_key, value))
+
+        if isinstance(state_dict, OrderedDict):
+            return OrderedDict(items)
+        return dict(items)
 
     @staticmethod
     def _extract_metadata(checkpoint: Any) -> Dict[str, Any]:
