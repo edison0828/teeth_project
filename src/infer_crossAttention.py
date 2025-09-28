@@ -1,397 +1,432 @@
-#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-build_tooth_dataset_boxratio_multi.py  (v2 with bbox/mask ROI + per-ROI bboxes)
-===============================================================================
-一次處理多個「COCO bbox（caries）」資料集，並以
-「牙齒 bbox 覆蓋 caries bbox 的比例」判斷是否 caries。
+infer_full_pano_caries.py
+=========================
+輸入：單張全口 X 光 (或資料夾)，用 YOLO-Seg 取出每顆牙與 FDI，將牙齒 ROI + FDI 丟入
+多模態分類模型，最後在原圖上標示出「預測為 caries」的牙齒（含機率），輸出標註影像與 CSV。
 
-輸出結構（每個 tag 一個資料夾）：
-  {SAVE_ROOT}/{tag}/caries/*.png
-  {SAVE_ROOT}/{tag}/normal/*.png
-  {SAVE_ROOT}/{tag}/rois_mask/*.png     ← 使用 segmentation 形態學後的 ROI（若有 mask）
-  {SAVE_ROOT}/{tag}/rois_bbox/*.png     ← 單純 bbox 裁切的 ROI
-  {SAVE_ROOT}/{tag}/Caries_annotations.csv
+需求：
+- ultralytics==8.x (YOLO)
+- torch / torchvision
+- opencv-python
+- pandas, numpy, Pillow
+- 你的 train_crossAttention_v2.py（內含 MultiModalResNet_CA_Improved 與 convert_resnet_to_se_resnet）
 
-CSV 欄位新增：
-  - bboxes: caries 在「牙齒 ROI 圖」內的相對座標 0~1（可能有多框），陰性為 []
-    例：
-      file_name,label,fdi,bboxes
-      roi/11_0001.png,1,11,"[[0.32,0.45,0.41,0.53],[0.60,0.50,0.68,0.58]]"
-      roi/21_0007.png,0,21,"[]"
-      roi/46_0032.png,1,46,"[[0.40,0.62,0.49,0.71]]"
+使用範例：
+python infer_full_pano_caries.py \
+  --input ./pano_samples/IMG_001.png \
+  --yolo_path "./model_- 25 april 2025 15_02.pt" \
+  --clf_path "./cross_attn_fdi_v5.pth" \
+  --save_dir "./infer_out" \
+  --thr_mode layered --thr_json ./eval_out/layered_thresholds.json
+
+若沒有 layered JSON，可用：
+  --thr_mode fixed --threshold 0.5
 """
 
 import os
+import cv2
 import json
 import glob
-import cv2
-import torch
+import argparse
 import numpy as np
 import pandas as pd
+from PIL import Image
 from tqdm import tqdm
+from collections import defaultdict
+
+import torch
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, Dataset
+from torchvision import transforms, models
 from ultralytics import YOLO
-import torch.nn.functional as F  # 僅用於把 mask 放大做「視覺裁切」，與判定無關
-import ast
+from torchvision.ops import box_iou
 
-# ─────────────── 多資料集設定 ───────────────
-# 每筆: (IMG_DIR, COCO_JSON, TAG)
-DATASETS = [
-    # ("./CariesXraysDataset.v2i.coco/train",
-    #  "./CariesXraysDataset.v2i.coco/train/_annotations.coco.json",
-    #  "CariesXray_train"),
-    # ("./CariesXraysDataset.v2i.coco/valid",
-    #  "./CariesXraysDataset.v2i.coco/valid/_annotations.coco.json",
-    #  "CariesXray_valid"),
-    # ("./CariesXraysDataset.v2i.coco/test",
-    #  "./CariesXraysDataset.v2i.coco/test/_annotations.coco.json",
-    #  "CariesXray_test"),
+# ====== 匯入你的多模態模型 ======
+from train_crossAttention import (
+    MultiModalResNet_CA_Improved,
+    convert_resnet_to_se_resnet,
+)
 
-    # DentexDataset
-    ("./dentex_Carise_v1.coco/train",
-     "./dentex_Carise_v1.coco/train/_annotations.coco.json",
-     "Dentex_train"),
-    ("./dentex_Carise_v1.coco/valid",
-     "./dentex_Carise_v1.coco/valid/_annotations.coco.json",
-     "Dentex_valid"),
-    ("./dentex_Carise_v1.coco/test",
-     "./dentex_Carise_v1.coco/test/_annotations.coco.json",
-     "Dentex_test"),
+# ---------------- 固定 FDI 對應（與訓練一致） ----------------
+FDI_TO_IDX = {'11': 0, '12': 1, '13': 2, '14': 3, '15': 4, '16': 5, '17': 6, '18': 7, '21': 8, '22': 9, '23': 10, '24': 11, '25': 12, '26': 13, '27': 14, '28': 15,
+              '31': 16, '32': 17, '33': 18, '34': 19, '35': 20, '36': 21, '37': 22, '38': 23, '41': 24, '42': 25, '43': 26, '44': 27, '45': 28, '46': 29, '47': 30, '48': 31, '91': 32}
+IDX_TO_FDI = {v: k for k, v in FDI_TO_IDX.items()}
 
-]
-
-# ─────────────── 其他可調參數 ───────────────
-MODEL_PATH = "./fdi_all seg.pt"  # 你的 FDI 牙位 YOLO-Seg 權重
-CONF_THRES = 0.25
-PATCH_SIZE = 224
-
-# 牙框 vs 蛀牙框的重疊比例門檻（不使用 mask 做判定）
-BOX_OVER_CARIES_THRES = 0.5      # 建議 0.3~0.7 之間調整
-TOOTH_BOX_MARGIN = 0             # 牙框外擴像素(吸收偵測/標註誤差)，如 2~8
-
-# 輸出根目錄（每個資料集會在底下建立自己的 tag 目錄）
-SAVE_ROOT = "patches_masked"
-
-# 視覺裁切的形態學（與判定無關，可全關）
-DILATE_KERNEL = 7
-DILATE_ITER = 6
-SMOOTH_BLUR = True
-SMOOTH_ITERATIONS = 3
-APPLY_GAUSSIAN = True
-
-# ROI 輸出模式：
-#   "mask"：只輸出 mask 版
-#   "bbox"：只輸出 bbox 版
-#   "both"：兩者都輸出
-ROI_SAVE_STYLE = "both"
-
-# CSV 中 file_name 欄位要對應哪一種 ROI（當 ROI_SAVE_STYLE="both" 才有意義）
-#   "mask" 或 "bbox"
-CSV_FILE_NAME_PREFERENCE = "mask"
-# ────────────────────────────────────────────
+# ---------------- 閥值分群 ----------------
 
 
-# ─────────────── 小工具 ───────────────
-def ensure_dirs(*paths):
-    for p in paths:
-        os.makedirs(p, exist_ok=True)
+def fdi_to_basic_group(fdi_code_str: str) -> str:
+    """門牙(1~3)、前磨牙(4~5)、大臼齒(6~8)；91 歸門牙。"""
+    n = int(fdi_code_str)
+    if n == 91:
+        return "incisor"
+    digit = n % 10
+    if digit in [1, 2, 3]:
+        return "incisor"
+    elif digit in [4, 5]:
+        return "premolar"
+    else:
+        return "molar"
 
 
-def list_images(img_dir):
-    paths = []
-    for ext in ["*.png", "*.jpg", "*.jpeg", "*.bmp", "*.tif", "*.tiff"]:
-        paths.extend(glob.glob(os.path.join(img_dir, ext)))
-    return sorted(paths)
+def choose_group_fn(name: str):
+    return fdi_to_basic_group if name == "basic" else None
 
 
-def build_caries_map_from_coco(coco_json_path):
-    with open(coco_json_path, "r", encoding="utf-8") as f:
-        coco = json.load(f)
-    id2name = {im["id"]: im["file_name"] for im in coco["images"]}
-    name2id = {v: k for k, v in id2name.items()}
-    caries_map = {}
-    for ann in coco["annotations"]:
-        # 你的約定：category_id == 1 是 caries bbox
-        if ann.get("category_id", None) != 1:
-            continue
-        x, y, w, h = ann["bbox"]
-        caries_map.setdefault(ann["image_id"], []).append([x, y, x + w, y + h])
-    return id2name, name2id, caries_map
-
-
-def box_overlap_over_caries(tooth_xyxy, caries_xyxy, img_w, img_h, margin=0):
-    """回傳 overlap / area(caries_bbox)。tooth bbox 可加 margin 外擴。"""
-    x1t, y1t, x2t, y2t = map(float, tooth_xyxy)
-    if margin:
-        x1t -= margin
-        y1t -= margin
-        x2t += margin
-        y2t += margin
-        x1t = max(0, min(img_w, x1t))
-        x2t = max(0, min(img_w, x2t))
-        y1t = max(0, min(img_h, y1t))
-        y2t = max(0, min(img_h, y2t))
-
-    x1c, y1c, x2c, y2c = map(float, caries_xyxy)
-
-    xA = max(x1t, x1c)
-    yA = max(y1t, y1c)
-    xB = min(x2t, x2c)
-    yB = min(y2t, y2c)
-
-    inter = max(0.0, xB - xA) * max(0.0, yB - yA)
-    caries_area = max(0.0, x2c - x1c) * max(0.0, y2c - y1c)
-    if caries_area <= 0:
-        return 0.0
-    return inter / caries_area
-
-
-def clip_and_normalize_to_roi(cbox, tooth_xyxy, roi_w, roi_h):
+def pick_threshold_for_tooth(fdi_idx_int: int, thr_cfg: dict, fallback_thr: float) -> float:
     """
-    將全圖座標的 cbox 裁切到牙齒 bbox 內，並換算為 ROI 相對座標(0~1)。
-    若相交後無有效面積，回傳 None。
+    thr_cfg 來自 layered JSON: {"global": x, "groups": {...}, "per_fdi": {...}, "meta": {"grouping": "basic"}}
     """
-    x1t, y1t, x2t, y2t = tooth_xyxy
-    x1c, y1c, x2c, y2c = cbox
+    if not thr_cfg:
+        return fallback_thr
+    fdi_code = IDX_TO_FDI[int(fdi_idx_int)]
+    # per-FDI 優先
+    if "per_fdi" in thr_cfg and fdi_code in thr_cfg["per_fdi"]:
+        return float(thr_cfg["per_fdi"][fdi_code])
+    # group 次之
+    grouping = thr_cfg.get("meta", {}).get("grouping", "basic")
+    group_fn = choose_group_fn(grouping)
+    if group_fn is not None:
+        gname = group_fn(fdi_code)
+        if "groups" in thr_cfg and gname in thr_cfg["groups"]:
+            return float(thr_cfg["groups"][gname])
+    # 否則 global
+    return float(thr_cfg.get("global", fallback_thr))
 
-    # 與牙齒框相交並裁切到 ROI
-    nx1 = max(x1t, x1c) - x1t
-    ny1 = max(y1t, y1c) - y1t
-    nx2 = min(x2t, x2c) - x1t
-    ny2 = min(y2t, y2c) - y1t
+# ---------------- 視覺化工具 ----------------
 
-    # 無效
-    if nx2 <= nx1 or ny2 <= ny1:
+
+def overlay_mask(image_bgr, mask_bin, color=(0, 0, 255), alpha=0.35):
+    """在 BGR 影像上用半透明色塊疊上二值遮罩。"""
+    overlay = image_bgr.copy()
+    overlay[mask_bin > 0] = (
+        (1 - alpha) * overlay[mask_bin > 0] +
+        alpha * np.array(color, dtype=np.float32)
+    ).astype(np.uint8)
+    return overlay
+
+
+def draw_bbox_with_text(img, box, text, color=(0, 0, 255), thick=2):
+    x1, y1, x2, y2 = map(int, box)
+    cv2.rectangle(img, (x1, y1), (x2, y2), color, thick)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    cv2.putText(img, text, (x1, max(0, y1 - 6)),
+                font, 0.6, color, 2, cv2.LINE_AA)
+
+# ---------------- 模型建構 ----------------
+
+
+def build_classifier(args, num_fdi_classes: int):
+    base = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V2)
+    if args.use_se:
+        base = convert_resnet_to_se_resnet(base)
+    model = MultiModalResNet_CA_Improved(
+        image_model=base,
+        num_fdi_classes=num_fdi_classes,
+        fdi_embedding_dim=args.fdi_dim,
+        attn_dim=args.attn_dim,
+        attn_heads=args.attn_heads,
+        num_queries=args.num_queries,
+        use_film=args.use_film
+    )
+    # 載權重
+    try:
+        state = torch.load(
+            args.clf_path, map_location="cpu", weights_only=True)
+    except TypeError:
+        state = torch.load(args.clf_path, map_location="cpu")
+    model.load_state_dict(state, strict=False)
+    return model
+
+# ---------------- 主推論 ----------------
+
+
+def infer_one_image(img_path, yolo, clf_model, device, args, thr_cfg=None):
+    # 讀圖
+    img_bgr = cv2.imread(img_path)
+    if img_bgr is None:
+        raise FileNotFoundError(f"讀不到影像：{img_path}")
+    H, W = img_bgr.shape[:2]
+
+    # YOLO 推論
+    r = yolo(img_path, conf=args.yolo_conf, device=device, verbose=False)[0]
+    if r.boxes is None or len(r.boxes) == 0:
+        print(f"[WARN] 無偵測牙齒：{os.path.basename(img_path)}")
         return None
 
-    # 轉相對座標
-    rx1 = float(np.clip(nx1 / roi_w, 0.0, 1.0))
-    ry1 = float(np.clip(ny1 / roi_h, 0.0, 1.0))
-    rx2 = float(np.clip(nx2 / roi_w, 0.0, 1.0))
-    ry2 = float(np.clip(ny2 / roi_h, 0.0, 1.0))
+    boxes = r.boxes.xyxy.cpu().numpy().astype(int)
+    clses = r.boxes.cls.cpu().int().numpy()
+    masks = r.masks.data.cpu().numpy()  # [N, h, w] (model 輸出大小)
+    # resize masks 到原圖大小
+    masks_full = cv2.resize(
+        masks.transpose(1, 2, 0), (W, H), interpolation=cv2.INTER_NEAREST
+    ).transpose(2, 0, 1)  # [N, H, W], {0/1}
 
-    # 確保仍有正面積
-    if rx2 <= rx1 or ry2 <= ry1:
-        return None
+    # 影像前處理
+    tfm = transforms.Compose([
+        transforms.Resize((args.patch_size, args.patch_size)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406],
+                             [0.229, 0.224, 0.225]),
+    ])
 
-    # 適度四捨五入，便於閱讀（保留 4 位小數）
-    return [round(rx1, 4), round(ry1, 4), round(rx2, 4), round(ry2, 4)]
-
-
-# ─────────────── 主流程（單一資料集） ───────────────
-def process_one_dataset(img_dir, coco_json, tag, model, device):
-    print(f"\n=== Processing dataset: {tag} ===")
-    out_root = os.path.join(SAVE_ROOT, tag)
-    caries_dir = os.path.join(out_root, "caries")
-    normal_dir = os.path.join(out_root, "normal")
-    rois_mask_dir = os.path.join(out_root, "rois_mask")
-    rois_bbox_dir = os.path.join(out_root, "rois_bbox")
-
-    # 依選項建立資料夾
-    ensure_dirs(out_root, caries_dir, normal_dir)
-    if ROI_SAVE_STYLE in ("mask", "both"):
-        ensure_dirs(rois_mask_dir)
-    if ROI_SAVE_STYLE in ("bbox", "both"):
-        ensure_dirs(rois_bbox_dir)
-
-    # 準備 caries 標註
-    id2name, name2id, caries_map = build_caries_map_from_coco(coco_json)
-
+    # 形態學參數
     morph_kernel = cv2.getStructuringElement(
-        cv2.MORPH_ELLIPSE, (DILATE_KERNEL, DILATE_KERNEL))
+        cv2.MORPH_ELLIPSE, (args.dilate_kernel, args.dilate_kernel)
+    )
 
-    img_paths = list_images(img_dir)
-    print(f"  Total images: {len(img_paths)}")
+    # 先把所有 ROI 做成 batch
+    roi_tensors = []
+    fdi_indices = []
+    meta = []  # 存 bbox/fdi/idx 以便回填
+    os.makedirs(os.path.join(args.save_dir, "rois"),
+                exist_ok=True) if args.dump_rois else None
 
-    records = []
-    for img_idx, img_path in enumerate(tqdm(img_paths)):
-        file_name = os.path.basename(img_path)
-
-        # YOLO 推論（偵測牙齒框；mask 只用於視覺裁切）
-        r = model(img_path, conf=CONF_THRES, device=device, verbose=False)[0]
-        if r.boxes is None or len(r.boxes) == 0:
+    for i in range(len(boxes)):
+        x1, y1, x2, y2 = boxes[i]
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(W, x2), min(H, y2)
+        if x2 <= x1 or y2 <= y1:
             continue
 
-        boxes = r.boxes.xyxy.cpu()
-        clses = r.boxes.cls.cpu().int()
-
-        img_bgr = cv2.imread(img_path)
-        if img_bgr is None:
+        # 取當前牙齒 FDI 字串（模型類別名）
+        fdi_str = yolo.names[int(clses[i])]
+        if fdi_str not in FDI_TO_IDX:
+            # 不支援的 FDI 直接跳過
             continue
-        H, W = img_bgr.shape[:2]
+        fdi_idx = FDI_TO_IDX[fdi_str]
 
-        # 視覺裁切可用的 full-size mask（可選）
-        full_masks = None
-        if r.masks is not None and len(r.masks.data) > 0:
-            masks = r.masks.data.cpu()  # (N, h', w')
-            full_masks = F.interpolate(masks.unsqueeze(
-                1).float(), size=(H, W), mode="nearest").squeeze(1)
-            full_masks = (full_masks > 0.5).to(torch.uint8).numpy()  # {0,1}
+        # 取該牙齒 mask，做形態學平滑
+        mask_crop = masks_full[i][y1:y2, x1:x2].astype(np.uint8)
+        mask_bin = (mask_crop > 0).astype(np.uint8) * 255
+        if args.dilate_iter > 0:
+            mask_bin = cv2.dilate(mask_bin, morph_kernel,
+                                  iterations=args.dilate_iter)
+        if args.smooth_blur:
+            mask_bin = cv2.morphologyEx(
+                mask_bin, cv2.MORPH_CLOSE, morph_kernel, iterations=args.smooth_iters
+            )
+        if args.apply_gaussian:
+            mask_bin = cv2.GaussianBlur(mask_bin, (5, 5), 2)
+        _, mask_bin = cv2.threshold(mask_bin, 127, 255, cv2.THRESH_BINARY)
+        mask_crop = (mask_bin // 255).astype(np.uint8)  # 0/1
 
-        # 取該圖的 caries bboxes（全圖座標）
-        image_id = name2id.get(file_name, None)
-        caries_boxes = caries_map.get(
-            image_id, []) if image_id is not None else []
+        # 生成 ROI（被 mask 的 patch）
+        patch = img_bgr[y1:y2, x1:x2].copy()
+        patch[mask_crop == 0] = 0
+        # 轉 PIL 以套 transforms
+        pil = Image.fromarray(cv2.cvtColor(
+            cv2.resize(patch, (args.patch_size, args.patch_size)),
+            cv2.COLOR_BGR2RGB
+        ))
+        roi_tensor = tfm(pil)
+        roi_tensors.append(roi_tensor)
+        fdi_indices.append(fdi_idx)
+        meta.append({
+            "x1": int(x1), "y1": int(y1), "x2": int(x2), "y2": int(y2),
+            "fdi": fdi_str, "det_idx": int(i)
+        })
 
-        for i in range(len(boxes)):
-            x1, y1, x2, y2 = boxes[i].round().int().tolist()
-            x1, y1 = max(0, x1), max(0, y1)
-            x2, y2 = min(W, x2), min(H, y2)
-            if x2 <= x1 or y2 <= y1:
-                continue
-            roi_w, roi_h = (x2 - x1), (y2 - y1)
+        # 選配：輸出 ROI 圖檔
+        if args.dump_rois:
+            roi_path = os.path.join(args.save_dir, "rois",
+                                    f"{os.path.splitext(os.path.basename(img_path))[0]}_{i}_{fdi_str}.png")
+            cv2.imwrite(roi_path, patch)
 
-            # —— 用 bbox-coverage 來判斷 caries —— #
-            label = "normal"
-            best_ratio = 0.0
-            per_roi_rel_caries_boxes = []  # 最終要寫入 CSV 的相對座標框（0~1）
-            if len(caries_boxes) > 0:
-                for cbox in caries_boxes:
-                    r_ratio = box_overlap_over_caries(
-                        [x1, y1, x2, y2], cbox, W, H, margin=TOOTH_BOX_MARGIN)
-                    if r_ratio > best_ratio:
-                        best_ratio = r_ratio
-                if best_ratio >= BOX_OVER_CARIES_THRES:
-                    label = "caries"
-                    # 只蒐集與牙齒 ROI 有「足夠重疊」的病灶框（使用同一門檻）
-                    for cbox in caries_boxes:
-                        r_ratio = box_overlap_over_caries(
-                            [x1, y1, x2, y2], cbox, W, H, margin=TOOTH_BOX_MARGIN)
-                        if r_ratio >= BOX_OVER_CARIES_THRES:
-                            rel_box = clip_and_normalize_to_roi(
-                                cbox, [x1, y1, x2, y2], roi_w, roi_h)
-                            if rel_box is not None:
-                                per_roi_rel_caries_boxes.append(rel_box)
-            # ------------------------------------- #
+    if not roi_tensors:
+        print(f"[WARN] 無可用 ROI：{os.path.basename(img_path)}")
+        return None
 
-            # ── 先在「原 ROI 尺寸」處理，最後再 resize ──
-            patch_bbox = img_bgr[y1:y2, x1:x2].copy()      # 原尺寸 ROI
-            patch_mask = None
+    # 批次推論
+    clf_model.eval()
+    with torch.no_grad():
+        batch = torch.stack(roi_tensors).to(device)
+        fdis = torch.tensor(fdi_indices, dtype=torch.long, device=device)
+        logits = clf_model(batch, fdis)      # [N, 2]
+        probs = F.softmax(logits, dim=1)[
+            :, 1].detach().cpu().numpy()  # caries prob
 
-            if full_masks is not None and i < len(full_masks):
-                patch_mask = patch_bbox.copy()              # 原尺寸 ROI
-                mask_crop = full_masks[i][y1:y2, x1:x2]     # 原尺寸二值 mask（0/1）
+    # 根據 thr_mode 取 threshold
+    if args.thr_mode == "fixed":
+        def thr_picker(fdi_idx): return args.threshold
+    elif args.thr_mode == "layered":
+        def thr_picker(fdi_idx): return pick_threshold_for_tooth(
+            fdi_idx, thr_cfg, args.threshold)
+    else:  # safety
+        def thr_picker(fdi_idx): return args.threshold
 
-                mask_bin = (mask_crop > 0).astype(np.uint8) * 255
-                if DILATE_ITER > 0:
-                    mask_bin = cv2.dilate(
-                        mask_bin, morph_kernel, iterations=DILATE_ITER)
-                if SMOOTH_BLUR:
-                    mask_bin = cv2.morphologyEx(mask_bin, cv2.MORPH_CLOSE, morph_kernel,
-                                                iterations=SMOOTH_ITERATIONS)
-                if APPLY_GAUSSIAN:
-                    mask_bin = cv2.GaussianBlur(mask_bin, (5, 5), 2)
-                _, mask_bin = cv2.threshold(
-                    mask_bin, 127, 255, cv2.THRESH_BINARY)
-                mask_crop = (mask_bin // 255).astype(np.uint8)  # 回到 0/1
+    # 視覺化：把 caries 疊回原圖
+    vis = img_bgr.copy()
+    rows = []
+    for k, m in enumerate(meta):
+        p = float(probs[k])
+        fdi_idx = fdi_indices[k]
+        thr = float(thr_picker(fdi_idx))
+        pred = int(p >= thr)
 
-                # 尺寸一致（都是原 ROI 尺寸），先套遮罩再縮放
-                patch_mask[mask_crop == 0] = 0
+        # 繪製（只疊 caries）
+        if pred == 1:
+            # 取原圖上該牙齒 mask，再疊色
+            x1, y1, x2, y2 = m["x1"], m["y1"], m["x2"], m["y2"]
+            # 重建該牙齒 mask（與前處理一致）
+            mask_local = masks_full[m["det_idx"]
+                                    ][y1:y2, x1:x2].astype(np.uint8)
+            mask_local = (mask_local > 0).astype(np.uint8) * 255
+            if args.dilate_iter > 0:
+                mask_local = cv2.dilate(
+                    mask_local, morph_kernel, iterations=args.dilate_iter)
+            if args.smooth_blur:
+                mask_local = cv2.morphologyEx(
+                    mask_local, cv2.MORPH_CLOSE, morph_kernel, iterations=args.smooth_iters
+                )
+            if args.apply_gaussian:
+                mask_local = cv2.GaussianBlur(mask_local, (5, 5), 2)
+            _, mask_local = cv2.threshold(
+                mask_local, 127, 255, cv2.THRESH_BINARY)
+            mask_local = (mask_local // 255).astype(np.uint8)
 
-            # 最後統一縮放到 PATCH_SIZE×PATCH_SIZE
-            patch_bbox = cv2.resize(patch_bbox, (PATCH_SIZE, PATCH_SIZE))
-            if patch_mask is not None:
-                patch_mask = cv2.resize(patch_mask, (PATCH_SIZE, PATCH_SIZE))
+            # 疊色 + 畫框與文字
+            vis[y1:y2, x1:x2] = overlay_mask(
+                vis[y1:y2, x1:x2], mask_local, color=(0, 0, 255), alpha=0.35)
+            draw_bbox_with_text(
+                vis, (x1, y1, x2, y2),
+                text=f"FDI {m['fdi']} | p={p:.2f} thr={thr:.2f}",
+                color=(0, 0, 255), thick=2
+            )
+        else:
+            # 可選：畫淡綠框標示「預測正常」，若不想畫就註解掉
+            if args.draw_normal:
+                draw_bbox_with_text(
+                    vis, (m["x1"], m["y1"], m["x2"], m["y2"]),
+                    text=f"FDI {m['fdi']} | p={p:.2f}",
+                    color=(0, 200, 0), thick=1
+                )
 
-            # FDI 名稱
-            current_fdi = model.names[clses[i].item()]
+        rows.append({
+            "orig_image": os.path.basename(img_path),
+            "fdi": m["fdi"],
+            "x1": m["x1"], "y1": m["y1"], "x2": m["x2"], "y2": m["y2"],
+            "prob_caries": p,
+            "thr_used": thr,
+            "pred": int(pred)  # 1=caries, 0=normal
+        })
 
-            # 檔名
-            base_name = f"{tag}_{img_idx}_{i}_{current_fdi}.png"
+    # 輸出
+    base = os.path.splitext(os.path.basename(img_path))[0]
+    os.makedirs(args.save_dir, exist_ok=True)
+    out_img = os.path.join(args.save_dir, f"{base}_caries_overlay.png")
+    cv2.imwrite(out_img, vis)
 
-            # 依設定輸出 ROI 檔案
-            roi_file_mask = None
-            roi_file_bbox = None
-            if ROI_SAVE_STYLE in ("mask", "both"):
-                # 若沒有 mask，退化成 bbox 版（確保檔案存在）
-                to_save = patch_mask if patch_mask is not None else patch_bbox
-                roi_file_mask = os.path.join(out_root, "rois_mask", base_name)
-                cv2.imwrite(roi_file_mask, to_save)
-            if ROI_SAVE_STYLE in ("bbox", "both"):
-                roi_file_bbox = os.path.join(out_root, "rois_bbox", base_name)
-                cv2.imwrite(roi_file_bbox, patch_bbox)
+    out_csv = os.path.join(args.save_dir, f"{base}_per_tooth.csv")
+    pd.DataFrame(rows).to_csv(out_csv, index=False)
 
-            # 分類圖（維持與 ROI 同風格，以利直接配套使用）
-            if CSV_FILE_NAME_PREFERENCE == "bbox" or (ROI_SAVE_STYLE == "bbox"):
-                out_cls_dir = caries_dir if label == "caries" else normal_dir
-                out_path = os.path.join(out_cls_dir, base_name)
-                cv2.imwrite(out_path, patch_bbox)
-            else:
-                # 偏好 mask；若無 mask 則也會是 bbox 內容
-                out_cls_dir = caries_dir if label == "caries" else normal_dir
-                out_path = os.path.join(out_cls_dir, base_name)
-                to_save = patch_mask if (patch_mask is not None and ROI_SAVE_STYLE in (
-                    "mask", "both")) else patch_bbox
-                cv2.imwrite(out_path, to_save)
-
-            # 依 CSV 偏好決定 file_name（與你給的例子一致；你要放 roi/xxx 也可自訂）
-            if CSV_FILE_NAME_PREFERENCE == "bbox":
-                chosen_roi_rel = os.path.join("rois_bbox", base_name) if ROI_SAVE_STYLE in (
-                    "bbox", "both") else os.path.join("rois_mask", base_name)
-            else:
-                chosen_roi_rel = os.path.join("rois_mask", base_name) if ROI_SAVE_STYLE in (
-                    "mask", "both") else os.path.join("rois_bbox", base_name)
-
-            # 記錄（稍後會轉成 Caries_annotations.csv）
-            records.append({
-                "file_name": base_name,        # 相對於 tag 目錄
-                "label": label,
-                "fdi": current_fdi,
-                "bboxes": per_roi_rel_caries_boxes,  # 0~1 相對座標（多框），陰性為 []
-                "orig_image": file_name,
-                "tag": tag,
-                "x1": x1, "y1": y1, "x2": x2, "y2": y2,
-                "overlap_over_caries": round(float(best_ratio), 4),
-                "roi_mask_file": (os.path.join("rois_mask", base_name) if roi_file_mask else ""),
-                "roi_bbox_file": (os.path.join("rois_bbox", base_name) if roi_file_bbox else "")
-            })
-
-    # ---- 這裡直接做你要的 CSV 轉換，輸出 Caries_annotations.csv ----
-    if len(records) == 0:
-        print(f"  [WARN] No teeth found in dataset {tag}.")
-        return
-
-    df = pd.DataFrame(records)
-
-    # 僅保留相對路徑檔名（已是相對於 tag 目錄）
-    # file_name 已經是相對路徑（rois_*/xxx.png），維持原值
-
-    # 調整欄位順序：file_name, label, fdi, bboxes 放前面，其他放後面
-    front_cols = ["file_name", "label", "fdi", "bboxes"]
-    other_cols = [c for c in df.columns if c not in front_cols]
-    df = df[front_cols + other_cols]
-
-    # label: normal->0, caries->1
-    df["label"] = df["label"].map({"normal": 0, "caries": 1}).astype(int)
-
-    # bboxes 轉字串（CSV 保留 JSON 風格字面量）
-    # 若你未來要讀回，可用 ast.literal_eval()
-    df["bboxes"] = df["bboxes"].apply(
-        lambda L: json.dumps(L, ensure_ascii=False))
-
-    # 輸出到該 tag 目錄下
-    csv_out = os.path.join(out_root, "Caries_annotations.csv")
-    df.to_csv(csv_out, index=False, encoding="utf-8")
-
-    print(f"  ✔ Done {tag}: {len(df)} teeth")
-    print(f"    - Images : {out_root}/{{caries,normal,rois_mask,rois_bbox}}")
-    print(f"    - CSV    : {csv_out}")
-    print(
-        f"    - THRES  : BOX_OVER_CARIES_THRES={BOX_OVER_CARIES_THRES}, MARGIN={TOOTH_BOX_MARGIN}")
-    print(
-        f"    - ROI    : ROI_SAVE_STYLE={ROI_SAVE_STYLE}, CSV_FILE_NAME_PREFERENCE={CSV_FILE_NAME_PREFERENCE}")
+    return out_img, out_csv
 
 
-# ─────────────── 執行入口 ───────────────
+def main():
+    parser = argparse.ArgumentParser()
+    # 輸入/輸出
+    parser.add_argument("--input", default="./NTU Pano.v4i.coco-segmentation/test/0122_jpg.rf.ea011affa30353539d962ed890b83406.jpg",
+                        help="單張影像路徑或資料夾（將掃描 *.png,*.jpg,...）")
+    parser.add_argument("--save_dir", default="./infer_out")
+    parser.add_argument("--dump_rois", action="store_true",
+                        help="輸出每顆 ROI 圖以便除錯")
+    parser.add_argument("--draw_normal", action="store_true",
+                        help="是否也在圖上標正常牙齒（淡綠框）")
+
+    # YOLO（牙位分割）
+    parser.add_argument("--yolo_path", default="./fdi_seg.pt",
+                        help="YOLO-Seg 權重（FDI）")
+    parser.add_argument("--yolo_conf", type=float, default=0.25)
+
+    # 多模態分類器
+    parser.add_argument(
+        "--clf_path", default="./cross_attn_fdi_v5.pth", help="分類器權重 (.pth)")
+    parser.add_argument("--use_se", action="store_true", default=True)
+    parser.add_argument("--use_film", action="store_true", default=True)
+    parser.add_argument("--num_queries", type=int, default=4)
+    parser.add_argument("--attn_dim", type=int, default=256)
+    parser.add_argument("--attn_heads", type=int, default=8)
+    parser.add_argument("--fdi_dim", type=int, default=32)
+
+    # 影像處理
+    parser.add_argument("--patch_size", type=int, default=224)
+    parser.add_argument("--dilate_kernel", type=int, default=7)
+    parser.add_argument("--dilate_iter", type=int, default=6)
+    parser.add_argument("--smooth_blur", action="store_true", default=True)
+    parser.add_argument("--smooth_iters", type=int, default=3)
+    parser.add_argument("--apply_gaussian", action="store_true", default=True)
+
+    # 閥值設定
+    parser.add_argument("--thr_mode", choices=["fixed", "layered"], default="fixed",
+                        help="fixed: 單一阈值；layered: 讀 JSON 依 FDI/群組分層")
+    parser.add_argument("--threshold", type=float, default=0.5,
+                        help="thr_mode=fixed 時使用；或作為 layered 的 fallback")
+    parser.add_argument("--thr_json", type=str, default="./eval_out/layered_thresholds.json",
+                        help="thr_mode=layered 時提供（val 產生的 JSON）")
+
+    # 裝置
+    parser.add_argument("--cpu", action="store_true")
+
+    args = parser.parse_args()
+
+    device = torch.device("cpu" if args.cpu or (
+        not torch.cuda.is_available()) else "cuda")
+
+    # 載入 YOLO（牙位 + 分割）
+    yolo = YOLO(args.yolo_path)
+    yolo.fuse()
+    # 載入分類模型
+    clf = build_classifier(args, num_fdi_classes=len(FDI_TO_IDX)).to(device)
+
+    # layered thresholds
+    thr_cfg = None
+    if args.thr_mode == "layered":
+        if not args.thr_json or (not os.path.isfile(args.thr_json)):
+            print("[WARN] thr_mode=layered 但未提供有效 JSON，將使用 fallback threshold。")
+        else:
+            with open(args.thr_json, "r", encoding="utf-8") as f:
+                thr_cfg = json.load(f)
+            print(f"[INFO] 已讀取 layered thresholds：{args.thr_json}")
+
+    # 收集影像
+    img_paths = []
+    if os.path.isdir(args.input):
+        for ext in ["*.png", "*.jpg", "*.jpeg", "*.bmp", "*.tif", "*.tiff"]:
+            img_paths.extend(glob.glob(os.path.join(args.input, ext)))
+        img_paths = sorted(img_paths)
+    else:
+        img_paths = [args.input]
+
+    os.makedirs(args.save_dir, exist_ok=True)
+    index_rows = []
+
+    for p in tqdm(img_paths, desc="Infer"):
+        try:
+            result = infer_one_image(
+                p, yolo, clf, device, args, thr_cfg=thr_cfg)
+        except Exception as e:
+            print(f"[ERROR] {os.path.basename(p)} 推論失敗：{e}")
+            continue
+        if result is None:
+            continue
+        out_img, out_csv = result
+        index_rows.append({
+            "orig_image": os.path.basename(p),
+            "overlay_path": out_img,
+            "csv_path": out_csv
+        })
+
+    if index_rows:
+        pd.DataFrame(index_rows).to_csv(os.path.join(
+            args.save_dir, "index.csv"), index=False)
+        print(f"\n✔ 完成！共輸出 {len(index_rows)} 張結果")
+        print(f"  - 目錄：{args.save_dir}")
+        print(f"  - 索引：{os.path.join(args.save_dir, 'index.csv')}")
+    else:
+        print("\n[WARN] 沒有可輸出的結果。")
+
+
 if __name__ == "__main__":
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = YOLO(MODEL_PATH)
-    print(model.names)
-    model.fuse()
-
-    os.makedirs(SAVE_ROOT, exist_ok=True)
-
-    for (img_dir, coco_json, tag) in DATASETS:
-        process_one_dataset(img_dir, coco_json, tag, model, device)
-
-    print("\nAll datasets processed.")
+    main()
