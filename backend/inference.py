@@ -1,7 +1,9 @@
-"""整合 YOLO 牙齒偵測與 Cross-Attention 齒質病灶分類的推論服務。"""
+"""整合 YOLO 牙齒偵測與 Cross-Attention 齲齒病灶分類的推論服務。"""
 
 from __future__ import annotations
 
+import json
+import re
 import threading
 
 from collections import Counter, OrderedDict
@@ -30,6 +32,34 @@ from torchvision import transforms
 
 
 from .inference_models import build_cross_attn_fdi
+
+
+def normalize_fdi_label(raw: Any) -> str:
+    """Convert various FDI-style labels (e.g. ``FDI_11``) into pure digits."""
+
+    if raw is None:
+        return ""
+    match = re.findall(r"\d+", str(raw))
+    return match[0] if match else str(raw)
+
+
+def fdi_to_basic_group(fdi_code: str) -> str:
+    """Group FDI codes into incisor/premolar/molar buckets."""
+
+    try:
+        number = int(fdi_code)
+    except (TypeError, ValueError):
+        return "incisor"
+
+    if number == 91:
+        return "incisor"
+
+    last_digit = number % 10
+    if last_digit in (1, 2, 3):
+        return "incisor"
+    if last_digit in (4, 5):
+        return "premolar"
+    return "molar"
 
 
 
@@ -324,6 +354,20 @@ class BaseInference:
         confs = boxes.conf.cpu().numpy() if boxes.conf is not None else np.ones(len(xyxy))
         classes = boxes.cls.cpu().numpy().astype(int)
 
+        masks_full: Optional[np.ndarray] = None
+        kernel: Optional[np.ndarray] = None
+        masks_attr = getattr(result, "masks", None)
+        if masks_attr is not None:
+            mask_data = getattr(masks_attr, "data", None)
+            if mask_data is not None and len(mask_data) > 0:
+                mask_np = mask_data.cpu().numpy()
+                masks_full = cv2.resize(
+                    mask_np.transpose(1, 2, 0),
+                    (width, height),
+                    interpolation=cv2.INTER_NEAREST,
+                ).transpose(2, 0, 1)
+                kernel = self._build_kernel()
+
         patches: List[np.ndarray] = []
         original_patches: List[np.ndarray] = []
         fdi_indices: List[int] = []
@@ -344,22 +388,41 @@ class BaseInference:
                 if isinstance(self._detector.names, (dict, list))
                 else str(cls_idx)
             )
-            if fdi_label not in self._fdi_to_index:
+            normalized_label = normalize_fdi_label(fdi_label)
+            if normalized_label not in self._fdi_to_index:
                 continue
 
-            crop = image[y1:y2, x1:x2]
+            crop = image[y1:y2, x1:x2].copy()
             if crop.size == 0:
                 continue
 
+            mask_for_overlay: Optional[np.ndarray] = None
+            if (
+                masks_full is not None
+                and kernel is not None
+                and idx < masks_full.shape[0]
+            ):
+                raw_mask = (masks_full[idx][y1:y2, x1:x2] > 0).astype(np.uint8) * 255
+                if raw_mask.size > 0:
+                    mask_for_overlay = self._process_mask(raw_mask, kernel)
+                    if self._roi_style == "mask":
+                        crop[mask_for_overlay == 0] = 0
+
             original_patches.append(crop.copy())
-            resized = cv2.resize(crop, (224, 224), interpolation=cv2.INTER_AREA)
+            resized = cv2.resize(
+                crop,
+                (self._patch_size, self._patch_size),
+                interpolation=cv2.INTER_AREA,
+            )
             patches.append(resized)
-            fdi_indices.append(self._fdi_to_index[fdi_label])
+            fdi_indices.append(self._fdi_to_index[normalized_label])
             meta.append(
                 {
                     "bbox": [float(x1), float(y1), float(x2), float(y2)],
                     "detector_conf": float(det_conf),
-                    "fdi_label": fdi_label,
+                    "fdi_label": normalized_label,
+                    "raw_label": fdi_label,
+                    "detector_index": idx,
                 }
             )
 
@@ -380,10 +443,11 @@ class BaseInference:
         }
 
         serialized_findings: List[Dict[str, Any]] = []
+        thresholds = [self._select_threshold(idx) for idx in fdi_indices]
 
-        for idx, (info, prob) in enumerate(zip(meta, probs)):
+        for idx, (info, prob, thr) in enumerate(zip(meta, probs, thresholds)):
             score = float(prob)
-            if score < self.caries_threshold:
+            if score < thr:
                 continue
             severity = self._severity_from_probability(score)
             finding_id = f"FND-{uuid4().hex[:8].upper()}"
@@ -406,7 +470,7 @@ class BaseInference:
 
             color = severity_colors.get(severity, (0, 215, 255))
             cv2.rectangle(overlay_image, (x1_i, y1_i), (x2_i, y2_i), color, 2)
-            label = f"{info['fdi_label']} {score:.2f}"
+            label = f"{info['fdi_label']} p={score:.2f} thr={thr:.2f}"
             cv2.putText(
                 overlay_image,
                 label,
@@ -417,6 +481,20 @@ class BaseInference:
                 1,
                 cv2.LINE_AA,
             )
+
+            if masks_full is not None and kernel is not None:
+                det_index = info.get("detector_index")
+                if isinstance(det_index, int) and 0 <= det_index < masks_full.shape[0]:
+                    raw_mask = (masks_full[det_index][y1_i:y2_i, x1_i:x2_i] > 0).astype(np.uint8) * 255
+                    if raw_mask.size > 0:
+                        processed = self._process_mask(raw_mask, kernel)
+                        overlay_patch = overlay_image[y1_i:y2_i, x1_i:x2_i]
+                        overlay_image[y1_i:y2_i, x1_i:x2_i] = self._overlay_mask(
+                            overlay_patch,
+                            processed,
+                            color=(0, 0, 255),
+                            alpha=0.35,
+                        )
 
             assets: Dict[str, Optional[str]] = {}
             if output_dir is not None:
@@ -458,6 +536,8 @@ class BaseInference:
                     "extra": {
                         "detector_confidence": info["detector_conf"],
                         "classifier_probability": score,
+                        "threshold_used": thr,
+                        "raw_detector_label": info.get("raw_label"),
                         "bbox_xyxy": [float(x1), float(y1), float(x2), float(y2)],
                         "bbox_normalized": bbox_normalized,
                         "centroid": centroid,
@@ -534,7 +614,20 @@ class CrossCamInference(BaseInference):
         self._device: Optional[torch.device] = None
         self._detector = None
         self._classifier = None
+        self._patch_size = 224
+        self._roi_style = "bbox"
+        self._dilate_kernel = 7
+        self._dilate_iter = 6
+        self._smooth_blur = True
+        self._smooth_iters = 3
+        self._apply_gaussian = True
+        self._threshold_mode = "fixed"
+        self._layered_thresholds: Optional[Dict[str, Any]] = None
+        self._idx_to_fdi: Dict[int, str] = {}
 
+        self._update_transform()
+
+    def _update_transform(self) -> None:
         self._transform = transforms.Compose(
             [
                 transforms.ToTensor(),
@@ -544,6 +637,181 @@ class CrossCamInference(BaseInference):
                 ),
             ]
         )
+
+    @staticmethod
+    def _coerce_int(value: Any, default: int) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _coerce_float(value: Any, default: float) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _coerce_bool(value: Any, default: bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {"true", "1", "yes", "y"}:
+                return True
+            if lowered in {"false", "0", "no", "n"}:
+                return False
+        if isinstance(value, (int, float)):
+            return bool(value)
+        return default
+
+    def _load_layered_thresholds(self, payload: Any) -> Optional[Dict[str, Any]]:
+        if isinstance(payload, dict):
+            return payload
+        if isinstance(payload, str) and payload:
+            path = Path(payload)
+            if not path.is_absolute():
+                path = self.classifier_path.parent / path
+            if path.exists():
+                try:
+                    with open(path, "r", encoding="utf-8") as handle:
+                        data = json.load(handle)
+                    if isinstance(data, dict):
+                        return data
+                except Exception:  # pragma: no cover - best effort parse
+                    return None
+        return None
+
+    def _apply_metadata_config(self, metadata: Dict[str, Any]) -> None:
+        if not metadata:
+            self._update_transform()
+            return
+
+        sources: List[Dict[str, Any]] = [metadata]
+        for key in ("inference", "analysis", "analysis_config", "config"):
+            nested = metadata.get(key)
+            if isinstance(nested, dict):
+                sources.append(nested)
+
+        for source in sources:
+            roi_style = source.get("roi_style") or source.get("roiStyle")
+            if isinstance(roi_style, str):
+                self._roi_style = roi_style.strip().lower() or self._roi_style
+
+            patch_size = source.get("patch_size") or source.get("image_size")
+            if patch_size is not None:
+                self._patch_size = max(8, self._coerce_int(patch_size, self._patch_size))
+
+            dilate_kernel = source.get("dilate_kernel") or source.get("mask_kernel")
+            if dilate_kernel is not None:
+                self._dilate_kernel = max(1, self._coerce_int(dilate_kernel, self._dilate_kernel))
+
+            dilate_iter = source.get("dilate_iter") or source.get("dilate_iterations")
+            if dilate_iter is not None:
+                self._dilate_iter = max(0, self._coerce_int(dilate_iter, self._dilate_iter))
+
+            smooth_blur = source.get("smooth_blur")
+            if smooth_blur is not None:
+                self._smooth_blur = self._coerce_bool(smooth_blur, self._smooth_blur)
+
+            smooth_iters = source.get("smooth_iters") or source.get("smooth_iterations")
+            if smooth_iters is not None:
+                self._smooth_iters = max(0, self._coerce_int(smooth_iters, self._smooth_iters))
+
+            gaussian = source.get("apply_gaussian") or source.get("gaussian")
+            if gaussian is not None:
+                self._apply_gaussian = self._coerce_bool(gaussian, self._apply_gaussian)
+
+            fallback_thr = source.get("threshold") or source.get("fallback_threshold")
+            if fallback_thr is not None:
+                self.caries_threshold = self._coerce_float(fallback_thr, self.caries_threshold)
+
+            mode = source.get("thr_mode") or source.get("threshold_mode")
+            if isinstance(mode, str):
+                self._threshold_mode = mode.strip().lower() or self._threshold_mode
+
+            layered = (
+                source.get("layered_thresholds")
+                or source.get("thresholds")
+                or source.get("layered_thresholds_path")
+                or source.get("threshold_config")
+            )
+            if layered:
+                loaded = self._load_layered_thresholds(layered)
+                if loaded:
+                    self._layered_thresholds = loaded
+
+        self._update_transform()
+
+    def _build_kernel(self) -> np.ndarray:
+        size = max(1, int(self._dilate_kernel))
+        if size % 2 == 0:
+            size += 1
+        return cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size))
+
+    def _process_mask(self, mask: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+        processed = mask.copy()
+        if self._dilate_iter > 0:
+            processed = cv2.dilate(processed, kernel, iterations=self._dilate_iter)
+        if self._smooth_blur and self._smooth_iters > 0:
+            processed = cv2.morphologyEx(
+                processed,
+                cv2.MORPH_CLOSE,
+                kernel,
+                iterations=self._smooth_iters,
+            )
+        if self._apply_gaussian:
+            processed = cv2.GaussianBlur(processed, (5, 5), 2)
+        _, processed = cv2.threshold(processed, 127, 255, cv2.THRESH_BINARY)
+        return processed
+
+    @staticmethod
+    def _overlay_mask(image: np.ndarray, mask: np.ndarray, color: Tuple[int, int, int], alpha: float = 0.35) -> np.ndarray:
+        overlay = image.copy()
+        idx = mask > 0
+        overlay[idx] = (
+            (1 - alpha) * overlay[idx] + alpha * np.array(color, dtype=np.float32)
+        ).astype(np.uint8)
+        return overlay
+
+    def _pick_threshold_from_config(self, fdi_idx: int) -> float:
+        if not self._layered_thresholds or fdi_idx not in self._idx_to_fdi:
+            return self.caries_threshold
+
+        config = self._layered_thresholds
+        fdi_code = self._idx_to_fdi.get(fdi_idx)
+        if not fdi_code:
+            return self.caries_threshold
+
+        per_fdi = config.get("per_fdi")
+        if isinstance(per_fdi, dict) and fdi_code in per_fdi:
+            return self._coerce_float(per_fdi[fdi_code], self.caries_threshold)
+
+        grouping = "basic"
+        meta = config.get("meta")
+        if isinstance(meta, dict):
+            grouping = str(meta.get("grouping", grouping))
+
+        if grouping == "basic":
+            group_name = fdi_to_basic_group(fdi_code)
+        else:
+            group_name = None
+
+        groups = config.get("groups")
+        if group_name and isinstance(groups, dict) and group_name in groups:
+            return self._coerce_float(groups[group_name], self.caries_threshold)
+
+        global_thr = config.get("global")
+        if global_thr is not None:
+            return self._coerce_float(global_thr, self.caries_threshold)
+
+        return self.caries_threshold
+
+    def _select_threshold(self, fdi_idx: int) -> float:
+        if self._threshold_mode == "layered":
+            return self._pick_threshold_from_config(fdi_idx)
+        return self.caries_threshold
 
     def _ensure_models(self) -> None:
         if self._detector is not None and self._classifier is not None:
@@ -580,6 +848,7 @@ class CrossCamInference(BaseInference):
                 state_dict = self._extract_state_dict(checkpoint)
                 state_dict = self._normalise_state_dict_keys(state_dict)
                 metadata = self._extract_metadata(checkpoint)
+                self._apply_metadata_config(metadata)
                 model_kwargs = {
                     key: metadata[key]
                     for key in self._MODEL_KWARGS
@@ -613,6 +882,7 @@ class CrossCamInference(BaseInference):
                 mapping = self._normalise_mapping(mapping, num_fdi)
                 if not mapping:
                     mapping = self._sequential_mapping(num_fdi)
+                self._idx_to_fdi = {idx: label for label, idx in mapping.items()}
                 self._fdi_to_index = self._expand_with_synonyms(mapping)
 
     @staticmethod
@@ -709,10 +979,18 @@ class CrossCamInference(BaseInference):
                     idx = int(value)
                 except (TypeError, ValueError):
                     continue
-                result[str(key)] = idx
+                label = normalize_fdi_label(key)
+                if not label:
+                    continue
+                result[label] = idx
             return result
         if isinstance(raw, (list, tuple)):
-            return {str(item): idx for idx, item in enumerate(raw)}
+            mapping: Dict[str, int] = {}
+            for idx, item in enumerate(raw):
+                label = normalize_fdi_label(item)
+                if label and label not in mapping:
+                    mapping[label] = idx
+            return mapping
         return {}
 
     def _build_mapping_from_detector(self, num_fdi: int) -> Dict[str, int]:
@@ -723,41 +1001,42 @@ class CrossCamInference(BaseInference):
         elif isinstance(names_source, list):
             labels = [str(name) for name in names_source]
 
-        labels = [label.strip() for label in labels if label]
+        labels = [normalize_fdi_label(label.strip()) for label in labels if label]
         seen: Dict[str, None] = {}
         unique_labels: List[str] = []
         for label in labels:
-            if label not in seen:
+            if label and label not in seen:
                 seen[label] = None
                 unique_labels.append(label)
 
         if len(unique_labels) < num_fdi:
             unique_labels = self._default_fdi_codes(num_fdi)
 
-        return {label: idx for idx, label in enumerate(unique_labels[:num_fdi])}
+        mapping: Dict[str, int] = {}
+        for idx, label in enumerate(unique_labels[:num_fdi]):
+            mapping[label] = idx
+        return mapping
 
     @staticmethod
     def _normalise_mapping(mapping: Dict[str, int], num_fdi: int) -> Dict[str, int]:
-        filtered = {str(key): int(value) for key, value in mapping.items() if 0 <= int(value) < num_fdi}
-        if len(filtered) == num_fdi:
-            return filtered
-        if not filtered:
+        canonical: Dict[int, str] = {}
+        for key, value in mapping.items():
+            try:
+                idx = int(value)
+            except (TypeError, ValueError):
+                continue
+            if not 0 <= idx < num_fdi:
+                continue
+            label = normalize_fdi_label(key)
+            if not label:
+                continue
+            canonical.setdefault(idx, label)
+
+        if len(canonical) != num_fdi:
             return {}
-        if len(filtered) > num_fdi:
-            grouped: Dict[int, List[str]] = {}
-            for label, idx in filtered.items():
-                grouped.setdefault(idx, []).append(label)
-            if len(grouped) == num_fdi and all(idx in grouped for idx in range(num_fdi)):
-                result: Dict[str, int] = {}
-                for idx in range(num_fdi):
-                    for label in grouped[idx]:
-                        result[label] = idx
-                if result:
-                    return result
-        ordered = sorted(filtered.items(), key=lambda item: item[1])
-        if len(ordered) == num_fdi:
-            return {key: idx for idx, (key, _) in enumerate(ordered)}
-        return {}
+
+        ordered = sorted(canonical.items(), key=lambda item: item[0])
+        return {label: idx_value for idx_value, label in ordered}
 
     @staticmethod
     def _sequential_mapping(num_fdi: int) -> Dict[str, int]:
@@ -775,16 +1054,18 @@ class CrossCamInference(BaseInference):
 
     @staticmethod
     def _expand_with_synonyms(mapping: Dict[str, int]) -> Dict[str, int]:
-        expanded = dict(mapping)
-        for label, idx in list(mapping.items()):
-            if label.startswith("FDI-"):
-                bare = label[4:]
-                if bare and bare not in expanded:
-                    expanded[bare] = idx
-            else:
-                prefixed = f"FDI-{label}"
-                if prefixed not in expanded:
-                    expanded[prefixed] = idx
+        expanded: Dict[str, int] = {}
+        for label, idx in mapping.items():
+            normalized = normalize_fdi_label(label)
+            candidates = {
+                label,
+                normalized,
+                f"FDI-{normalized}" if normalized else None,
+                f"FDI_{normalized}" if normalized else None,
+            }
+            for candidate in candidates:
+                if candidate:
+                    expanded.setdefault(candidate, idx)
         return expanded
 
 
