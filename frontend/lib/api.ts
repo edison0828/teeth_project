@@ -1,9 +1,11 @@
-import { fallbackAnalysis, fallbackAnalysesSummary, fallbackDashboard, fallbackModels, fallbackPatientDetail, fallbackPatients } from "./mock-data";
+import { fallbackAnalysis, fallbackAnalysesSummary, fallbackDashboard, fallbackDemoInference, fallbackDemoSamples, fallbackModels, fallbackPatientDetail, fallbackPatients } from "./mock-data";
 import type {
   AnalysisDetail,
   AnalysisSummary,
   ChangePasswordRequest,
   DashboardOverview,
+  DemoInferenceResult,
+  DemoSampleListResponse,
   ImageUploadResponse,
   ModelConfig,
   ModelConfigCreateRequest,
@@ -83,6 +85,42 @@ export async function uploadImage(formData: FormData, token?: string): Promise<I
   }
 
   return (await response.json()) as ImageUploadResponse;
+}
+
+
+export async function fetchDemoSamples(): Promise<DemoSampleListResponse> {
+  return fetchJson<DemoSampleListResponse>("/demo/samples", fallbackDemoSamples);
+}
+
+export interface DemoInferenceOptions {
+  file?: File;
+  sampleId?: string;
+  rerun?: boolean;
+}
+
+export async function submitDemoInference(options: DemoInferenceOptions): Promise<DemoInferenceResult> {
+  const formData = new FormData();
+  if (options.sampleId) {
+    formData.append("sample_id", options.sampleId);
+  }
+  if (options.rerun) {
+    formData.append("rerun", "true");
+  }
+  if (options.file) {
+    formData.append("file", options.file);
+  }
+
+  const response = await fetch(`${API_BASE_URL}/demo/infer`, {
+    method: "POST",
+    body: formData,
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(await extractErrorMessage(response));
+  }
+
+  return (await response.json()) as DemoInferenceResult;
 }
 
 export async function fetchModels(token?: string): Promise<ModelConfig[]> {

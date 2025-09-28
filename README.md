@@ -95,6 +95,16 @@ Responses return curated sample payloads that match the design specification, ma
 
 The original PyTorch scripts located in `src/` remain intact for researchers who need to train or evaluate models. Each script contains inline comments describing expected CSV/DICOM formats and configuration options.
 
+
+### 10. Cross-Attention Demo
+
+A lightweight FastAPI + Next.js experience is available to showcase the cross-attention Grad-CAM inference pipeline.
+
+- **Backend**: `demo_backend/main.py` exposes `/demo/samples` and `/demo/infer`. Configure weights via environment variables such as `DEMO_YOLO_WEIGHTS` and `DEMO_CLASSIFIER_WEIGHTS`.
+- **Frontend**: visit `/demo` in the Next.js application to browse bundled cases or upload an image.
+- **Static assets**: curated demo samples live in `demo_backend/static/` with metadata in `demo_backend/samples/manifest.json`.
+- **Outputs**: inference artifacts are stored under `demo_backend/outputs/` and surfaced through `/demo-outputs`.
+
 ### 9. Next Steps & Customization Ideas
 
 - Replace in-memory stores with persistent databases and object storage.
@@ -199,4 +209,11 @@ NEXT_PUBLIC_API_BASE_URL="https://your-api.example.com" npm run dev
 - 在上傳流程中串接檔案上傳服務或使用預簽名網址。
 - 依據設計文件導入身分驗證與權限管理（例如 OAuth2 + RBAC）。
 - 將 `models/` 內的實際推論結果整合進分析流程。
+
+### 10. Cross-Attention Demo 示範
+
+- **後端**：`demo_backend/main.py` 提供 `/demo/samples` 與 `/demo/infer` 端點，可透過 `DEMO_YOLO_WEIGHTS`、`DEMO_CLASSIFIER_WEIGHTS` 等環境變數指定模型權重。
+- **前端**：在 Next.js 介面中開啟 `/demo` 頁面，即可瀏覽內建樣本或上傳影像查看推論與 Grad-CAM 疊層。
+- **靜態資產**：示範用的影像與熱力圖位於 `demo_backend/static/`，對應的中繼資料儲存在 `demo_backend/samples/manifest.json`。
+- **輸出檔案**：推論產物寫入 `demo_backend/outputs/`，並由 FastAPI 透過 `/demo-outputs` 提供靜態下載。
 

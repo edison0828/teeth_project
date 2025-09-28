@@ -37,6 +37,7 @@ export function getSidebarNavItems(metrics: NavigationMetrics = {}): SidebarNavI
       href: "/patients",
       badge: recentPatients && recentPatients > 0 ? recentPatients : null,
     },
+    { label: "Demo", href: "/demo" },
     { label: "Notifications", href: "/notifications" },
     { label: "Reports", href: "/reports" },
     { label: "Models", href: "/models" },
@@ -50,6 +51,7 @@ export function getTopNavItems(user?: UserProfile | null): TopNavItem[] {
     { label: "Image Upload", href: "/image-upload", activeStartsWith: "/image-upload" },
     { label: "Analyses", href: "/analyses", activeStartsWith: "/analysis" },
     { label: "Models", href: "/models", activeStartsWith: "/models" },
+    { label: "Demo", href: "/demo", activeStartsWith: "/demo" },
     { label: "Settings", href: "/settings", activeStartsWith: "/settings" },
     { label: "Help", href: "/help", activeStartsWith: "/help" },
   ];

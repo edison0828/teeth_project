@@ -231,3 +231,42 @@ export interface TokenResponse {
   expires_in: number;
 }
 
+
+export interface DemoBoundingBox {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+export interface DemoToothFinding {
+  fdi: string;
+  prob_caries: number;
+  thr_used: number;
+  pred: boolean;
+  bbox: DemoBoundingBox;
+  orig_image?: string | null;
+  cam_path?: string | null;
+}
+
+export interface DemoSampleSummary {
+  id: string;
+  title: string;
+  description: string;
+  image_path: string;
+  overlay_path?: string | null;
+  cam_paths: Record<string, string>;
+  findings: DemoToothFinding[];
+}
+
+export interface DemoSampleListResponse {
+  items: DemoSampleSummary[];
+}
+
+export interface DemoInferenceResult {
+  request_id: string;
+  overlay_url: string;
+  csv_url: string;
+  findings: DemoToothFinding[];
+  warnings: string[];
+}
