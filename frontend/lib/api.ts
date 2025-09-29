@@ -20,7 +20,7 @@ import type {
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
-async function fetchJson<T>(path: string, fallback: T, token?: string): Promise<T> {
+async function fetchJson<T>(path: string, fallback?: T, token?: string): Promise<T> {
   try {
     const headers: HeadersInit = token
       ? {
@@ -42,8 +42,11 @@ async function fetchJson<T>(path: string, fallback: T, token?: string): Promise<
 
     return (await response.json()) as T;
   } catch (error) {
-    console.warn(`Falling back to mock data for ${path}`, error);
-    return fallback;
+    if (fallback !== undefined) {
+      console.warn(`Falling back to mock data for ${path}`, error);
+      return fallback;
+    }
+    throw error instanceof Error ? error : new Error(String(error));
   }
 }
 
@@ -89,7 +92,7 @@ export async function uploadImage(formData: FormData, token?: string): Promise<I
 
 
 export async function fetchDemoSamples(): Promise<DemoSampleListResponse> {
-  return fetchJson<DemoSampleListResponse>("/demo/samples", fallbackDemoSamples);
+  return fetchJson<DemoSampleListResponse>("/demo/samples");
 }
 
 export interface DemoInferenceOptions {

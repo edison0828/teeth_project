@@ -74,7 +74,7 @@
 ### 3.4 樣本資產準備
 - 將 PNG / JPG 檔放進 `demo_backend/static/samples/`，檔名（不含副檔名）會直接當作 `sample_id` 使用。
 - 若同資料夾中存在 `{sample_id}_overlay.png` 或 `{sample_id}_cam_<FDI>.png`，API 會自動帶入對應路徑，方便示範預先產生的疊圖與 Grad-CAM。
-- FastAPI 啟動後會將該資料夾掛載為 `/demo-assets/samples/...`，前端選取樣本時若找不到影像檔，會回傳 404 提示。
+- FastAPI 每次處理 `/demo/samples` 請求時會重新掃描資料夾，因此新增或移除樣本後無須重啟服務即可出現在頁面上；若前端仍請求到不存在的檔案，會以 404 協助追蹤錯誤檔名。
 
 ## 4. 前端設計重點
 - 位置：`frontend/app/demo/page.tsx`（Client Component）。

@@ -67,6 +67,7 @@ async def health() -> dict:
     responses={200: {"description": "List of curated demo samples."}},
 )
 async def list_samples(store: SampleStore = Depends(get_sample_store)) -> DemoSampleListResponse:
+    store.refresh()
     return DemoSampleListResponse(items=store.to_response())
 
 
