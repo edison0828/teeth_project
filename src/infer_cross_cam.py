@@ -45,7 +45,6 @@ from ultralytics import YOLO
 from src.train_cross_cam import (
     CrossAttnFDI,
     convert_resnet_to_se_resnet,
-    cam_from_aux,
 )
 
 
@@ -102,6 +101,29 @@ def draw_bbox_with_text(img, box, text, color=(40, 180, 255), thick=2):
         1,
         cv2.LINE_AA,
     )
+
+
+
+def grad_cam_plus_plus(feature_map: torch.Tensor, class_scores: torch.Tensor) -> torch.Tensor:
+    grads = torch.autograd.grad(
+        outputs=class_scores.sum(),
+        inputs=feature_map,
+        retain_graph=True,
+        create_graph=True,
+        allow_unused=True,
+    )[0]
+    if grads is None:
+        return torch.zeros(feature_map.size(0), feature_map.size(2), feature_map.size(3), device=feature_map.device)
+    grads2 = grads.pow(2)
+    grads3 = grads.pow(3)
+    eps = 1e-8
+    sum_grads = (feature_map * grads3).sum(dim=(2, 3), keepdim=True)
+    alpha = grads2 / (2.0 * grads2 + sum_grads + eps)
+    alpha = torch.where(torch.isfinite(alpha), alpha, torch.zeros_like(alpha))
+    positive_grad = F.relu(grads)
+    weights = (alpha * positive_grad).sum(dim=(2, 3))
+    cam = (weights.view(weights.size(0), -1, 1, 1) * feature_map).sum(dim=1)
+    return F.relu(cam)
 
 def create_cam_visualization(roi_image: np.ndarray, cam_map: np.ndarray, color=POSITIVE_COLOR):
     if roi_image is None or roi_image.size == 0:
@@ -354,17 +376,25 @@ def infer_one_image(img_path, yolo, clf_model, device, args, fdi_to_idx, idx_to_
         return None
 
     clf_model.eval()
-    with torch.no_grad():
-        batch = torch.stack(roi_tensors).to(device)
-        fdis = torch.tensor(fdi_indices, dtype=torch.long, device=device)
-        cams_np = None
-        if return_cam:
+    batch = torch.stack(roi_tensors).to(device)
+    fdis = torch.tensor(fdi_indices, dtype=torch.long, device=device)
+    cams_np = None
+
+    if return_cam:
+        clf_model.zero_grad(set_to_none=True)
+        with torch.enable_grad():
+            batch.requires_grad_(True)
             logits, feat, _ = clf_model(batch, fdis, return_feat_for_cam=True)
-            cams = cam_from_aux(feat, clf_model.aux_gap_fc, cls_idx=1)
-            cams_np = cams.detach().cpu().numpy()
-        else:
+            class_scores = logits[:, 1]
+            probs = F.softmax(logits, dim=1)[:, 1]
+            cams = grad_cam_plus_plus(feat, class_scores)
+        cams_np = cams.detach().cpu().numpy()
+        probs = probs.detach().cpu().numpy()
+        clf_model.zero_grad(set_to_none=True)
+    else:
+        with torch.no_grad():
             logits = clf_model(batch, fdis)
-        probs = F.softmax(logits, dim=1)[:, 1].detach().cpu().numpy()
+            probs = F.softmax(logits, dim=1)[:, 1].detach().cpu().numpy()
 
     if args.thr_mode == "fixed":
         def thr_picker(fdi_idx):

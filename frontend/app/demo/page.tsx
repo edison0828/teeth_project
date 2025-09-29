@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent, type WheelEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type PointerEvent,
+} from "react";
 import { fetchDemoSamples, submitDemoInference } from "../../lib/api";
 import type {
   DemoInferenceResult,
@@ -18,7 +25,9 @@ function formatProbability(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
-function pickDefaultFinding(findings: DemoToothFinding[]): DemoToothFinding | null {
+function pickDefaultFinding(
+  findings: DemoToothFinding[]
+): DemoToothFinding | null {
   if (findings.length === 0) {
     return null;
   }
@@ -26,87 +35,274 @@ function pickDefaultFinding(findings: DemoToothFinding[]): DemoToothFinding | nu
   return positive ?? findings[0];
 }
 
-function ZoomableImage({ src, alt }: { src: string; alt: string }): JSX.Element {
-  const [scale, setScale] = useState(1);
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const [isPanning, setIsPanning] = useState(false);
-  const originRef = useRef({ x: 0, y: 0 });
-  const offsetRef = useRef({ x: 0, y: 0 });
+interface ZoomableImageProps {
+  src: string;
+  alt: string;
+  sharedView?: [number, number, number, number] | null;
+  onViewChange?: (viewBox: [number, number, number, number] | null) => void;
+}
+
+function ZoomableImage({
+  src,
+  alt,
+  sharedView,
+  onViewChange,
+}: ZoomableImageProps): JSX.Element {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [imageSize, setImageSize] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
+  const [viewBox, setViewBox] = useState<
+    [number, number, number, number] | null
+  >(null);
+  const [selectionRect, setSelectionRect] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [isSelecting, setIsSelecting] = useState(false);
+  const initialViewBoxRef = useRef<[number, number, number, number] | null>(
+    null
+  );
+  const viewBoxRef = useRef<[number, number, number, number] | null>(null);
+  const selectionStartRef = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
-    setScale(1);
-    setOffset({ x: 0, y: 0 });
+    let cancelled = false;
+    const img = new Image();
+    img.onload = () => {
+      if (cancelled) {
+        return;
+      }
+      const naturalWidth = img.naturalWidth || 1;
+      const naturalHeight = img.naturalHeight || 1;
+      const baseView: [number, number, number, number] = [
+        0,
+        0,
+        naturalWidth,
+        naturalHeight,
+      ];
+      setImageSize({ width: naturalWidth, height: naturalHeight });
+      initialViewBoxRef.current = [...baseView];
+      const nextView = sharedView ?? baseView;
+      const clonedView: [number, number, number, number] = [...nextView];
+      setViewBox(clonedView);
+      viewBoxRef.current = [...clonedView];
+    };
+    img.src = src;
+    return () => {
+      cancelled = true;
+    };
   }, [src]);
 
-  const clampScale = (value: number): number => Math.min(6, Math.max(1, value));
+  useEffect(() => {
+    if (sharedView === undefined) {
+      return;
+    }
+    if (sharedView === null) {
+      const base = initialViewBoxRef.current;
+      if (!base) {
+        return;
+      }
+      const current = viewBoxRef.current;
+      if (
+        !current ||
+        base.some((value, index) => Math.abs(value - current[index]) > 1e-3)
+      ) {
+        const baseClone: [number, number, number, number] = [...base];
+        setViewBox(baseClone);
+      }
+      return;
+    }
+    const target: [number, number, number, number] = [...sharedView];
+    const current = viewBoxRef.current;
+    if (
+      !current ||
+      target.some((value, index) => Math.abs(value - current[index]) > 1e-3)
+    ) {
+      setViewBox(target);
+    }
+  }, [sharedView]);
 
-  const handleWheel = (event: WheelEvent<HTMLDivElement>): void => {
-    event.preventDefault();
-    const delta = -event.deltaY;
-    setScale((current) => clampScale(current + delta * 0.0015));
-  };
+  useEffect(() => {
+    if (viewBox) {
+      viewBoxRef.current = [...viewBox];
+    }
+  }, [viewBox]);
 
-  const handlePointerDown = (event: PointerEvent<HTMLDivElement>): void => {
-    event.preventDefault();
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-    setIsPanning(true);
-    originRef.current = { x: event.clientX, y: event.clientY };
-    offsetRef.current = { ...offset };
-  };
-
-  const handlePointerMove = (event: PointerEvent<HTMLDivElement>): void => {
-    if (!isPanning) {
+  const beginSelection = (event: PointerEvent<HTMLDivElement>): void => {
+    if (event.button !== 0 || !containerRef.current || !viewBoxRef.current) {
+      return;
+    }
+    const targetElement = event.target as HTMLElement | null;
+    if (targetElement && targetElement.closest("[data-zoom-ignore]")) {
       return;
     }
     event.preventDefault();
-    const dx = event.clientX - originRef.current.x;
-    const dy = event.clientY - originRef.current.y;
-    setOffset({ x: offsetRef.current.x + dx, y: offsetRef.current.y + dy });
+    const rect = containerRef.current.getBoundingClientRect();
+    const start = {
+      x: Math.min(Math.max(event.clientX - rect.left, 0), rect.width),
+      y: Math.min(Math.max(event.clientY - rect.top, 0), rect.height),
+    };
+    selectionStartRef.current = start;
+    setSelectionRect({ x: start.x, y: start.y, width: 0, height: 0 });
+    setIsSelecting(true);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
   };
 
-  const finishPan = (event: PointerEvent<HTMLDivElement>): void => {
-    if (!isPanning) {
+  const updateSelection = (event: PointerEvent<HTMLDivElement>): void => {
+    if (!isSelecting || !containerRef.current || !selectionStartRef.current) {
+      return;
+    }
+    event.preventDefault();
+    const rect = containerRef.current.getBoundingClientRect();
+    const current = {
+      x: Math.min(Math.max(event.clientX - rect.left, 0), rect.width),
+      y: Math.min(Math.max(event.clientY - rect.top, 0), rect.height),
+    };
+    const start = selectionStartRef.current;
+    const x = Math.min(start.x, current.x);
+    const y = Math.min(start.y, current.y);
+    const width = Math.abs(current.x - start.x);
+    const height = Math.abs(current.y - start.y);
+    setSelectionRect({ x, y, width, height });
+  };
+
+  const finishSelection = (event: PointerEvent<HTMLDivElement>): void => {
+    if (
+      !isSelecting ||
+      !containerRef.current ||
+      !selectionStartRef.current ||
+      !viewBoxRef.current
+    ) {
       return;
     }
     event.preventDefault();
     try {
       event.currentTarget.releasePointerCapture?.(event.pointerId);
     } catch {
-      // ignore release failures
+      // ignore
     }
-    setIsPanning(false);
+    setIsSelecting(false);
+    const currentRect = selectionRect;
+    setSelectionRect(null);
+    selectionStartRef.current = null;
+    if (!currentRect) {
+      return;
+    }
+    const { width, height } = currentRect;
+    if (width < 8 || height < 8) {
+      return;
+    }
+    const containerRect = containerRef.current.getBoundingClientRect();
+    const view = viewBoxRef.current;
+
+    const clamp = (value: number) => Math.min(Math.max(value, 0), 1);
+    const minXNorm = clamp(currentRect.x / containerRect.width);
+    const maxXNorm = clamp((currentRect.x + width) / containerRect.width);
+    const minYNorm = clamp(currentRect.y / containerRect.height);
+    const maxYNorm = clamp((currentRect.y + height) / containerRect.height);
+
+    const spanX = Math.max(maxXNorm - minXNorm, 0.02);
+    const spanY = Math.max(maxYNorm - minYNorm, 0.02);
+    const minWidth = initialViewBoxRef.current
+      ? initialViewBoxRef.current[2] * 0.01
+      : view[2] * 0.01;
+    const minHeight = initialViewBoxRef.current
+      ? initialViewBoxRef.current[3] * 0.01
+      : view[3] * 0.01;
+
+    const newWidth = Math.max(view[2] * spanX, Math.min(view[2], minWidth));
+    const newHeight = Math.max(view[3] * spanY, Math.min(view[3], minHeight));
+    let newX = view[0] + view[2] * minXNorm;
+    let newY = view[1] + view[3] * minYNorm;
+    const maxX = view[0] + view[2] - newWidth;
+    const maxY = view[1] + view[3] - newHeight;
+    newX = Math.min(Math.max(newX, view[0]), Math.max(maxX, view[0]));
+    newY = Math.min(Math.max(newY, view[1]), Math.max(maxY, view[1]));
+
+    const newView: [number, number, number, number] = [
+      newX,
+      newY,
+      newWidth,
+      newHeight,
+    ];
+    setViewBox(newView);
+    onViewChange?.(newView);
   };
 
-  const handleDoubleClick = (): void => {
-    setScale(1);
-    setOffset({ x: 0, y: 0 });
+  const cancelSelection = (event: PointerEvent<HTMLDivElement>): void => {
+    if (!isSelecting) {
+      return;
+    }
+    finishSelection(event);
   };
+
+  const handleReset = (): void => {
+    const base = initialViewBoxRef.current;
+    if (!base) {
+      return;
+    }
+    const baseClone: [number, number, number, number] = [...base];
+    setViewBox(baseClone);
+    onViewChange?.(baseClone);
+  };
+
+  const isAtInitial = (() => {
+    if (!viewBox || !initialViewBoxRef.current) {
+      return true;
+    }
+    return viewBox.every(
+      (value, index) =>
+        Math.abs(value - initialViewBoxRef.current![index]) < 1e-3
+    );
+  })();
 
   return (
     <div
-      className={`relative h-full w-full overflow-hidden ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
-      onWheel={handleWheel}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={finishPan}
-      onPointerLeave={finishPan}
-      onDoubleClick={handleDoubleClick}
+      ref={containerRef}
+      className="relative h-full w-full select-none"
+      onPointerDown={beginSelection}
+      onPointerMove={updateSelection}
+      onPointerUp={finishSelection}
+      onPointerLeave={cancelSelection}
+      onContextMenu={(event) => event.preventDefault()}
     >
-      <img
-        src={src}
-        alt={alt}
-        className="h-full w-full select-none object-contain"
-        draggable={false}
-        style={{
-          transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
-          transformOrigin: "center center",
-          transition: isPanning ? "none" : "transform 0.05s ease-out",
-        }}
-      />
-      {scale > 1 ? (
-        <div className="pointer-events-none absolute bottom-3 right-3 rounded-md bg-slate-900/80 px-2 py-1 text-xs text-slate-200">
-          {`${(scale * 100).toFixed(0)}%`}
+      {imageSize && viewBox ? (
+        <svg
+          className="h-full w-full"
+          viewBox={`${viewBox[0]} ${viewBox[1]} ${viewBox[2]} ${viewBox[3]}`}
+          preserveAspectRatio="xMidYMid meet"
+        >
+          <title>{alt}</title>
+          <image href={src} width={imageSize.width} height={imageSize.height} />
+        </svg>
+      ) : (
+        <div className="flex h-full items-center justify-center text-xs text-slate-500">
+          載入影像中...
         </div>
+      )}
+      <button
+        type="button"
+        data-zoom-ignore
+        onClick={handleReset}
+        disabled={isAtInitial}
+        className="absolute right-3 top-3 rounded-lg bg-slate-900/80 px-2 py-1 text-xs text-slate-200 shadow disabled:opacity-40"
+      >
+        重置視圖
+      </button>
+      {selectionRect ? (
+        <div
+          className="pointer-events-none absolute rounded border border-cyan-300 bg-cyan-400/10"
+          style={{
+            left: selectionRect.x,
+            top: selectionRect.y,
+            width: selectionRect.width,
+            height: selectionRect.height,
+          }}
+        />
       ) : null}
     </div>
   );
@@ -116,12 +312,17 @@ export default function DemoPage(): JSX.Element {
   const [samples, setSamples] = useState<DemoSampleSummary[]>([]);
   const [selectedSampleId, setSelectedSampleId] = useState<string | null>(null);
   const [result, setResult] = useState<DemoInferenceResult | null>(null);
-  const [activeFinding, setActiveFinding] = useState<DemoToothFinding | null>(null);
+  const [activeFinding, setActiveFinding] = useState<DemoToothFinding | null>(
+    null
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<PreviewSource | null>(null);
   const [inputKey, setInputKey] = useState(() => Date.now());
   const [onlyPositives, setOnlyPositives] = useState(true);
+  const [sharedZoomView, setSharedZoomView] = useState<
+    [number, number, number, number] | null
+  >(null);
 
   useEffect(() => {
     void (async () => {
@@ -187,6 +388,7 @@ export default function DemoPage(): JSX.Element {
     setResult(null);
     setActiveFinding(null);
     setActiveView("original");
+    setSharedZoomView(null);
   };
 
   const handleSample = async (sample: DemoSampleSummary): Promise<void> => {
@@ -197,10 +399,14 @@ export default function DemoPage(): JSX.Element {
     resetState();
 
     try {
-      const response = await submitDemoInference({ sampleId: sample.id, onlyPositive: onlyPositives });
+      const response = await submitDemoInference({
+        sampleId: sample.id,
+        onlyPositive: onlyPositives,
+      });
       setResult(response);
       const finding = pickDefaultFinding(response.findings);
       setActiveFinding(finding);
+      setSharedZoomView(null);
       if (response.overlay_url) {
         setActiveView("overlay");
       } else {
@@ -214,7 +420,9 @@ export default function DemoPage(): JSX.Element {
     }
   };
 
-  const handleUpload = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
+  const handleUpload = async (
+    event: ChangeEvent<HTMLInputElement>
+  ): Promise<void> => {
     if (!event.target.files || event.target.files.length === 0) {
       return;
     }
@@ -229,10 +437,14 @@ export default function DemoPage(): JSX.Element {
     resetState();
 
     try {
-      const response = await submitDemoInference({ file, onlyPositive: onlyPositives });
+      const response = await submitDemoInference({
+        file,
+        onlyPositive: onlyPositives,
+      });
       setResult(response);
       const finding = pickDefaultFinding(response.findings);
       setActiveFinding(finding);
+      setSharedZoomView(null);
       if (response.overlay_url) {
         setActiveView("overlay");
       } else {
@@ -248,19 +460,26 @@ export default function DemoPage(): JSX.Element {
   };
 
   const activePreview = viewSources.find((view) => view.key === activeView);
-  const activeCamUrl = activeFinding?.cam_path ? resolveMediaUrl(activeFinding.cam_path) : null;
-  const activeRoiUrl = activeFinding?.roi_path ? resolveMediaUrl(activeFinding.roi_path) : null;
+  const activeCamUrl = activeFinding?.cam_path
+    ? resolveMediaUrl(activeFinding.cam_path)
+    : null;
+  const activeRoiUrl = activeFinding?.roi_path
+    ? resolveMediaUrl(activeFinding.roi_path)
+    : null;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <div className="mx-auto flex min-h-screen max-w-6xl flex-col px-6 py-10">
         <header className="space-y-4 text-center lg:text-left">
-          <p className="text-sm uppercase tracking-[0.3em] text-cyan-300">Cross-Attention Grad-CAM Demo</p>
+          <p className="text-sm uppercase tracking-[0.3em] text-cyan-300">
+            Cross-Attention Grad-CAM Demo
+          </p>
           <h1 className="text-4xl font-bold tracking-tight text-white sm:text-5xl">
-            雲端即時體驗交叉注意力齲齒可視化
+            即時體驗交叉注意力齲齒可視化
           </h1>
           <p className="text-base leading-relaxed text-slate-300 sm:text-lg">
-            上傳全口 X 光或選擇預載樣本，即可呼叫 FastAPI 推論服務，查看逐齒置信度、偵測框與 Grad-CAM 熱力圖。
+            上傳全口 X 光或選擇預載樣本，即可呼叫 FastAPI
+            推論服務，查看逐齒置信度、偵測框與 Grad-CAM 熱力圖。
           </p>
         </header>
 
@@ -269,12 +488,16 @@ export default function DemoPage(): JSX.Element {
             <div className="space-y-3">
               <h2 className="text-xl font-semibold text-white">預設樣本</h2>
               <p className="text-sm text-slate-300">
-                專案會自動掃描 <code className="rounded bg-slate-800 px-1.5 py-0.5 text-xs">demo_backend/static/samples</code> 內的影像。
-                點擊即可立即送出推論請求。
+                專案會自動掃描{" "}
+                <code className="rounded bg-slate-800 px-1.5 py-0.5 text-xs">
+                  demo_backend/static/samples
+                </code>{" "}
+                內的影像。 點擊即可立即送出推論請求。
               </p>
               <div className="space-y-3">
                 {samples.map((sample) => {
-                  const previewUrl = resolveMediaUrl(sample.image_path) ?? sample.image_path;
+                  const previewUrl =
+                    resolveMediaUrl(sample.image_path) ?? sample.image_path;
                   const isActive = sample.id === selectedSampleId;
                   return (
                     <button
@@ -283,7 +506,9 @@ export default function DemoPage(): JSX.Element {
                       onClick={() => void handleSample(sample)}
                       disabled={loading}
                       className={`group w-full rounded-xl border p-3 text-left transition hover:border-cyan-400/80 hover:bg-slate-800/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/80 ${
-                        isActive ? "border-cyan-400/80 bg-slate-800/70" : "border-slate-800/80 bg-slate-900/30"
+                        isActive
+                          ? "border-cyan-400/80 bg-slate-800/70"
+                          : "border-slate-800/80 bg-slate-900/30"
                       } disabled:cursor-not-allowed disabled:opacity-60`}
                     >
                       {previewUrl ? (
@@ -294,13 +519,19 @@ export default function DemoPage(): JSX.Element {
                           className="mb-3 h-32 w-full rounded-lg object-cover"
                         />
                       ) : null}
-                      <h3 className="text-base font-medium text-white">{sample.title}</h3>
-                      <p className="mt-1 text-xs text-slate-300/80">{sample.description}</p>
+                      <h3 className="text-base font-medium text-white">
+                        {sample.title}
+                      </h3>
+                      <p className="mt-1 text-xs text-slate-300/80">
+                        {sample.description}
+                      </p>
                     </button>
                   );
                 })}
                 {samples.length === 0 ? (
-                  <p className="text-sm text-slate-400">尚未放入任何示範影像。</p>
+                  <p className="text-sm text-slate-400">
+                    尚未放入任何示範影像。
+                  </p>
                 ) : null}
               </div>
             </div>
@@ -308,7 +539,8 @@ export default function DemoPage(): JSX.Element {
             <div className="space-y-3">
               <h2 className="text-xl font-semibold text-white">上傳影像</h2>
               <p className="text-sm text-slate-300">
-                支援單張 PNG 或 JPG。推論完成後，系統會產生疊圖與 CSV，並於頁面右側顯示逐齒結果。
+                支援單張 PNG 或 JPG。推論完成後，系統會產生疊圖與
+                CSV，並於頁面右側顯示逐齒結果。
               </p>
               <label className="flex h-32 cursor-pointer items-center justify-center rounded-xl border border-dashed border-cyan-400/60 bg-slate-900/30 text-center text-sm font-medium text-cyan-200 transition hover:bg-slate-800/50">
                 <input
@@ -327,7 +559,9 @@ export default function DemoPage(): JSX.Element {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-sm font-semibold text-white">視覺化設定</p>
-                  <p className="text-xs text-slate-400">切換為只顯示疑似蛀牙時，推論結果會省略正常牙齒的框線與表格列。</p>
+                  <p className="text-xs text-slate-400">
+                    切換為只顯示疑似蛀牙時，推論結果會省略正常牙齒的框線與表格列。
+                  </p>
                 </div>
                 <label className="flex items-center gap-2 text-sm text-slate-200">
                   <input
@@ -345,16 +579,24 @@ export default function DemoPage(): JSX.Element {
             <div className="rounded-xl border border-slate-800/60 bg-slate-900/20 p-4 text-xs text-slate-300">
               <p className="font-semibold text-white">使用小提醒</p>
               <ul className="mt-2 space-y-1 list-disc pl-4">
-                <li>確保模型權重已放入 <code>models/</code> 目錄。</li>
-                <li>若使用 CPU，請設定 <code>DEMO_DEVICE=cpu</code>。</li>
-                <li>推論結果將儲存在 <code>demo_backend/outputs/</code>。</li>
+                <li>
+                  確保模型權重已放入 <code>models/</code> 目錄。
+                </li>
+                <li>
+                  若使用 CPU，請設定 <code>DEMO_DEVICE=cpu</code>。
+                </li>
+                <li>
+                  推論結果將儲存在 <code>demo_backend/outputs/</code>。
+                </li>
               </ul>
             </div>
           </aside>
 
           <section className="flex flex-col gap-6">
             {error ? (
-              <p className="rounded-xl border border-red-500/50 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</p>
+              <p className="rounded-xl border border-red-500/50 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                {error}
+              </p>
             ) : null}
             {loading ? (
               <p className="text-sm text-cyan-200">模型推論中，請稍候...</p>
@@ -363,7 +605,8 @@ export default function DemoPage(): JSX.Element {
             <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-6 shadow-xl shadow-slate-900/30">
               <h2 className="text-2xl font-semibold text-white">視覺化結果</h2>
               <p className="mt-1 text-sm text-slate-300">
-                依序切換原圖與推論疊圖掌握整體差異，右側可進一步檢視選定牙齒的 ROI 與 Grad-CAM。
+                依序切換原圖與推論疊圖掌握整體差異，右側可進一步檢視選定牙齒的
+                ROI 與 Grad-CAM。
               </p>
 
               <div className="mt-4 flex flex-wrap gap-3">
@@ -385,7 +628,10 @@ export default function DemoPage(): JSX.Element {
 
               <div className="mt-4 min-h-[320px] overflow-hidden rounded-xl border border-slate-800 bg-slate-950/60">
                 {activePreview ? (
-                  <ZoomableImage src={activePreview.url} alt={activePreview.label} />
+                  <ZoomableImage
+                    src={activePreview.url}
+                    alt={activePreview.label}
+                  />
                 ) : (
                   <div className="flex h-full items-center justify-center px-6 py-12 text-sm text-slate-400">
                     尚未選擇樣本或上傳影像。
@@ -397,29 +643,53 @@ export default function DemoPage(): JSX.Element {
                 <div className="mt-4 space-y-4 rounded-xl border border-slate-800 bg-slate-900/45 p-4">
                   <div className="flex flex-col gap-2 text-sm text-slate-300 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <span className="text-base font-semibold text-white">選取牙齒視圖</span>
-                      <p className="text-xs text-slate-400">顯示原始 ROI 與對應的 Grad-CAM 熱力圖，可雙擊重置縮放。</p>
+                      <span className="text-base font-semibold text-white">
+                        選取牙齒視圖
+                      </span>
+                      <p className="text-xs text-slate-400">
+                        顯示原始 ROI 與對應的 Grad-CAM 熱力圖，可雙擊重置縮放。
+                      </p>
                     </div>
-                    <div className="text-xs font-mono text-cyan-200">{`FDI ${activeFinding.fdi} · ${formatProbability(activeFinding.prob_caries)}`}</div>
+                    <div className="text-xs font-mono text-cyan-200">{`FDI ${
+                      activeFinding.fdi
+                    } · ${formatProbability(activeFinding.prob_caries)}`}</div>
                   </div>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="rounded-lg border border-slate-800 bg-slate-950/60">
-                      <div className="border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-300">原始 ROI</div>
+                      <div className="border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-300">
+                        原始 ROI
+                      </div>
                       <div className="h-56 p-2">
                         {activeRoiUrl ? (
-                          <ZoomableImage src={activeRoiUrl} alt={`ROI ${activeFinding.fdi}`} />
+                          <ZoomableImage
+                            src={activeRoiUrl}
+                            alt={`ROI ${activeFinding.fdi}`}
+                            sharedView={sharedZoomView}
+                            onViewChange={setSharedZoomView}
+                          />
                         ) : (
-                          <div className="flex h-full items-center justify-center text-xs text-slate-500">暫無裁切影像</div>
+                          <div className="flex h-full items-center justify-center text-xs text-slate-500">
+                            暫無裁切影像
+                          </div>
                         )}
                       </div>
                     </div>
                     <div className="rounded-lg border border-slate-800 bg-slate-950/60">
-                      <div className="border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-300">Grad-CAM</div>
+                      <div className="border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-300">
+                        Grad-CAM
+                      </div>
                       <div className="h-56 p-2">
                         {activeCamUrl ? (
-                          <ZoomableImage src={activeCamUrl} alt={`Grad-CAM ${activeFinding.fdi}`} />
+                          <ZoomableImage
+                            src={activeCamUrl}
+                            alt={`Grad-CAM ${activeFinding.fdi}`}
+                            sharedView={sharedZoomView}
+                            onViewChange={setSharedZoomView}
+                          />
                         ) : (
-                          <div className="flex h-full items-center justify-center text-xs text-slate-500">暫無熱力圖</div>
+                          <div className="flex h-full items-center justify-center text-xs text-slate-500">
+                            暫無熱力圖
+                          </div>
                         )}
                       </div>
                     </div>
@@ -431,11 +701,16 @@ export default function DemoPage(): JSX.Element {
                 <div className="mt-6 space-y-4">
                   <div className="flex flex-col gap-2 text-sm text-slate-300 lg:flex-row lg:items-center lg:justify-between">
                     <div>
-                      <span className="font-semibold text-white">請求 ID：</span>
-                      <span className="font-mono text-cyan-200">{result.request_id}</span>
+                      <span className="font-semibold text-white">
+                        請求 ID：
+                      </span>
+                      <span className="font-mono text-cyan-200">
+                        {result.request_id}
+                      </span>
                     </div>
                     <div className="text-xs text-slate-400">
-                      推論產出與 CSV 可透過 <code>/demo-outputs</code> 路徑下載。
+                      推論產出與 CSV 可透過 <code>/demo-outputs</code>{" "}
+                      路徑下載。
                     </div>
                   </div>
                   {result.warnings.length > 0 ? (
@@ -460,23 +735,33 @@ export default function DemoPage(): JSX.Element {
                       </thead>
                       <tbody className="divide-y divide-slate-800/60">
                         {result.findings.map((finding) => {
-                          const isSelected = activeFinding?.fdi === finding.fdi &&
+                          const isSelected =
+                            activeFinding?.fdi === finding.fdi &&
                             activeFinding?.bbox.x1 === finding.bbox.x1 &&
                             activeFinding?.bbox.y1 === finding.bbox.y1;
-                          const camUrl = finding.cam_path ? resolveMediaUrl(finding.cam_path) : null;
+                          const camUrl = finding.cam_path
+                            ? resolveMediaUrl(finding.cam_path)
+                            : null;
                           return (
                             <tr
                               key={`${result.request_id}-${finding.fdi}-${finding.bbox.x1}-${finding.bbox.y1}`}
                               onClick={() => {
+                                setSharedZoomView(null);
                                 setActiveFinding(finding);
                               }}
                               className={`cursor-pointer transition hover:bg-slate-900/60 ${
                                 isSelected ? "bg-slate-900/80" : ""
                               }`}
                             >
-                              <td className="px-3 py-2 font-semibold text-white">{finding.fdi}</td>
-                              <td className="px-3 py-2 text-slate-200">{formatProbability(finding.prob_caries)}</td>
-                              <td className="px-3 py-2 text-slate-200">{formatProbability(finding.thr_used)}</td>
+                              <td className="px-3 py-2 font-semibold text-white">
+                                {finding.fdi}
+                              </td>
+                              <td className="px-3 py-2 text-slate-200">
+                                {formatProbability(finding.prob_caries)}
+                              </td>
+                              <td className="px-3 py-2 text-slate-200">
+                                {formatProbability(finding.thr_used)}
+                              </td>
                               <td className="px-3 py-2">
                                 <span
                                   className={`rounded-full px-3 py-1 text-xs font-semibold ${
@@ -489,7 +774,8 @@ export default function DemoPage(): JSX.Element {
                                 </span>
                               </td>
                               <td className="px-3 py-2 font-mono text-xs text-slate-300">
-                                [{finding.bbox.x1}, {finding.bbox.y1}] → [{finding.bbox.x2}, {finding.bbox.y2}]
+                                [{finding.bbox.x1}, {finding.bbox.y1}] → [
+                                {finding.bbox.x2}, {finding.bbox.y2}]
                               </td>
                               <td className="px-3 py-2">
                                 {camUrl ? (
@@ -500,7 +786,9 @@ export default function DemoPage(): JSX.Element {
                                     className="h-20 w-20 rounded-lg object-cover"
                                   />
                                 ) : (
-                                  <span className="text-xs text-slate-400">無可用熱力圖</span>
+                                  <span className="text-xs text-slate-400">
+                                    無可用熱力圖
+                                  </span>
                                 )}
                               </td>
                             </tr>
@@ -508,7 +796,10 @@ export default function DemoPage(): JSX.Element {
                         })}
                         {result.findings.length === 0 ? (
                           <tr>
-                            <td colSpan={6} className="px-3 py-4 text-center text-sm text-slate-400">
+                            <td
+                              colSpan={6}
+                              className="px-3 py-4 text-center text-sm text-slate-400"
+                            >
                               無任何牙齒偵測結果。
                             </td>
                           </tr>
