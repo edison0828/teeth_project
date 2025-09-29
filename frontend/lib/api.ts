@@ -95,16 +95,12 @@ export async function fetchDemoSamples(): Promise<DemoSampleListResponse> {
 export interface DemoInferenceOptions {
   file?: File;
   sampleId?: string;
-  rerun?: boolean;
 }
 
 export async function submitDemoInference(options: DemoInferenceOptions): Promise<DemoInferenceResult> {
   const formData = new FormData();
   if (options.sampleId) {
     formData.append("sample_id", options.sampleId);
-  }
-  if (options.rerun) {
-    formData.append("rerun", "true");
   }
   if (options.file) {
     formData.append("file", options.file);

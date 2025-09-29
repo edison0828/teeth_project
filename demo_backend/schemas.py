@@ -25,9 +25,8 @@ class DemoSampleSummary(BaseModel):
     title: str
     description: str
     image_path: str
-    overlay_path: Optional[str]
-    cam_paths: Dict[str, str]
-    findings: List[DemoSampleFinding]
+    overlay_path: Optional[str] = None
+    cam_paths: Dict[str, str] = Field(default_factory=dict)
 
 
 class DemoInferenceFinding(DemoSampleFinding):

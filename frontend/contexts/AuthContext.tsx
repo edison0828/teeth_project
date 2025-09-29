@@ -30,10 +30,17 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 const AUTH_ROUTES = ["/login", "/register"];
+const PUBLIC_ROUTES = ["/demo"];
 const GUEST_MODE_KEY = "dentamind-guest-mode";
 
 function isAuthRoute(pathname: string): boolean {
   return AUTH_ROUTES.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`)
+  );
+}
+
+function isPublicRoute(pathname: string): boolean {
+  return PUBLIC_ROUTES.some(
     (route) => pathname === route || pathname.startsWith(`${route}/`)
   );
 }
@@ -113,9 +120,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    if (!token && !guestMode && !isAuthRoute(pathname)) {
+    if (!token && !guestMode && !isAuthRoute(pathname) && !isPublicRoute(pathname)) {
       router.replace("/login");
-    } else if ((token || guestMode) && isAuthRoute(pathname)) {
+    } else if ((token || guestMode) && isAuthRoute(pathname) && !isPublicRoute(pathname)) {
       router.replace("/");
     }
   }, [token, guestMode, loading, pathname, router]);

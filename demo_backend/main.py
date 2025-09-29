@@ -11,13 +11,8 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import DemoSettings
 from .pipeline import CrossAttentionDemoPipeline, DemoInferenceError
-from .samples import SampleStore
-from .schemas import (
-    DemoError,
-    DemoInferenceFinding,
-    DemoInferenceResponse,
-    DemoSampleListResponse,
-)
+from .samples import DemoSample, SampleStore
+from .schemas import DemoError, DemoInferenceFinding, DemoInferenceResponse, DemoSampleListResponse
 
 settings = DemoSettings()
 settings.ensure_directories()
@@ -75,13 +70,6 @@ async def list_samples(store: SampleStore = Depends(get_sample_store)) -> DemoSa
     return DemoSampleListResponse(items=store.to_response())
 
 
-def _resolve_static_path(uri: str) -> Path:
-    if uri.startswith("/demo-assets/"):
-        relative = uri[len("/demo-assets/") :]
-        return settings.static_dir / relative
-    return Path(uri)
-
-
 async def _save_upload(file: UploadFile) -> Path:
     suffix = Path(file.filename or "upload.png").suffix
     temp_path = settings.output_dir / f"upload-{uuid4().hex}{suffix}"
@@ -106,27 +94,10 @@ async def run_inference(
     pipeline: CrossAttentionDemoPipeline = Depends(get_pipeline),
     store: SampleStore = Depends(get_sample_store),
 ) -> DemoInferenceResponse:
+    sample_meta: Optional[DemoSample] = None
+
     if file is None and sample_id is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provide a sample_id or upload an image.")
-
-    # Pre-computed sample replay path
-    if sample_id and not rerun and file is None:
-        sample = store.get(sample_id)
-        if sample is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sample not found.")
-
-        findings = [
-            DemoInferenceFinding(**finding, cam_path=sample.cam_paths.get(finding["fdi"]))
-            for finding in sample.findings
-        ]
-        overlay = sample.overlay_path or sample.image_path
-        return DemoInferenceResponse(
-            request_id=f"sample-{sample.sample_id}",
-            overlay_url=overlay,
-            csv_url="",
-            findings=findings,
-            warnings=["Returning pre-computed assets bundled with the demo."],
-        )
 
     image_path: Optional[Path] = None
     cleanup_path: Optional[Path] = None
@@ -138,9 +109,10 @@ async def run_inference(
         sample = store.get(sample_id)
         if sample is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sample not found.")
-        image_path = _resolve_static_path(sample.image_path)
+        image_path = sample.image_path
         if not image_path.exists():
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sample image missing on server.")
+        sample_meta = sample
 
     assert image_path is not None
 
@@ -154,8 +126,10 @@ async def run_inference(
         if cleanup_path and cleanup_path.exists():
             cleanup_path.unlink(missing_ok=True)
 
+    cam_lookup = sample_meta.cam_paths if sample_meta else {}
+
     findings = [
-        DemoInferenceFinding(**finding, cam_path=None)
+        DemoInferenceFinding(**finding, cam_path=cam_lookup.get(finding.get("fdi")))
         for finding in prediction.findings
     ]
 

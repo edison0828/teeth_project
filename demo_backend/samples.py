@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from .config import DemoSettings
@@ -12,20 +12,19 @@ class DemoSample:
     sample_id: str
     title: str
     description: str
-    image_path: str
-    overlay_path: Optional[str]
+    image_uri: str
+    image_path: Path
+    overlay_uri: Optional[str]
     cam_paths: Dict[str, str]
-    findings: List[Dict[str, object]]
 
     def to_summary(self) -> Dict[str, object]:
         return {
             "id": self.sample_id,
             "title": self.title,
             "description": self.description,
-            "image_path": self.image_path,
-            "overlay_path": self.overlay_path,
+            "image_path": self.image_uri,
+            "overlay_path": self.overlay_uri,
             "cam_paths": self.cam_paths,
-            "findings": self.findings,
         }
 
 
@@ -37,26 +36,53 @@ class SampleStore:
 
     # ------------------------------------------------------------------
     def refresh(self) -> None:
-        manifest_path = self.settings.samples_manifest
-        if not manifest_path.exists():
+        samples_dir = self.settings.samples_dir
+        if not samples_dir.exists():
             self._items = {}
             return
 
-        with open(manifest_path, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-
+        supported = {".png", ".jpg", ".jpeg"}
         samples: Dict[str, DemoSample] = {}
-        for entry in raw:
-            sample = DemoSample(
-                sample_id=entry["id"],
-                title=entry.get("title", entry["id"]),
-                description=entry.get("description", ""),
-                image_path=entry.get("image_path", ""),
-                overlay_path=entry.get("overlay_path"),
-                cam_paths=entry.get("cam_paths", {}),
-                findings=entry.get("findings", []),
+
+        for path in sorted(samples_dir.iterdir()):
+            if path.suffix.lower() not in supported or not path.is_file():
+                continue
+
+            sample_id = path.stem
+            title = sample_id.replace("_", " ").replace("-", " ")
+            title = title.strip() or sample_id
+            title = title.title()
+            description = f"預設樣本：{sample_id}"
+
+            relative_uri = f"/demo-assets/{self.settings.samples_subdir}/{path.name}"
+            overlay_uri: Optional[str] = None
+            cam_paths: Dict[str, str] = {}
+
+            for ext in supported:
+                candidate = path.with_name(f"{sample_id}_overlay{ext}")
+                if candidate.exists():
+                    overlay_uri = f"/demo-assets/{self.settings.samples_subdir}/{candidate.name}"
+                    break
+
+            prefix = f"{sample_id}_cam_"
+            for cam_file in samples_dir.glob(f"{prefix}*"):
+                if not cam_file.is_file() or cam_file.suffix.lower() not in supported:
+                    continue
+                fdi = cam_file.stem[len(prefix) :]
+                if not fdi:
+                    continue
+                cam_paths[fdi] = f"/demo-assets/{self.settings.samples_subdir}/{cam_file.name}"
+
+            samples[sample_id] = DemoSample(
+                sample_id=sample_id,
+                title=title,
+                description=description,
+                image_uri=relative_uri,
+                image_path=path,
+                overlay_uri=overlay_uri,
+                cam_paths=cam_paths,
             )
-            samples[sample.sample_id] = sample
+
         self._items = samples
 
     # ------------------------------------------------------------------

@@ -255,8 +255,7 @@ export interface DemoSampleSummary {
   description: string;
   image_path: string;
   overlay_path?: string | null;
-  cam_paths: Record<string, string>;
-  findings: DemoToothFinding[];
+  cam_paths?: Record<string, string>;
 }
 
 export interface DemoSampleListResponse {

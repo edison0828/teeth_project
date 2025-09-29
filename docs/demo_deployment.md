@@ -22,8 +22,8 @@
 │                    Demo Backend (FastAPI)                      │
 │                                                                │
 │  Endpoints                                                     │
-│    GET  /demo/samples   → serve manifest with curated assets   │
-│    POST /demo/infer     → run inference or replay precomputed  │
+│    GET  /demo/samples   → list auto-discovered static samples  │
+│    POST /demo/infer     → run inference on uploads or presets  │
 │                                                                │
 │  Pipeline                                                      │
 │    ├─ Lazy-load YOLO + CrossAttention classifier               │
@@ -37,8 +37,8 @@
 │                Model Assets & Static Samples                   │
 │                                                                │
 │  - Weights (mounted into container via env-configurable paths) │
-│  - `demo_backend/static/` for bundled demo images/heatmaps     │
-│  - `demo_backend/samples/manifest.json` for metadata           │
+│  - `demo_backend/static/samples/` for bundled demo images      │
+│  - Optional heatmaps saved alongside the source images         │
 └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -49,7 +49,7 @@
 ### 3.1 程式結構
 - `demo_backend/main.py`：FastAPI 應用程式，統一使用 `/demo` 前綴並掛載靜態資源（`/demo-assets`、`/demo-outputs`）。
 - `demo_backend/pipeline.py`：封裝 YOLO 偵測與 CrossAttention 分類器，直接呼叫既有的 `infer_one_image` 函式，確保輸出一致。
-- `demo_backend/samples.py`：讀取預載樣本清單與對應資產，供 `/demo/samples` 使用。
+- `demo_backend/samples.py`：掃描靜態資料夾取得樣本、overlay、Grad-CAM 對應關係，供 `/demo/samples` 使用。
 - `demo_backend/schemas.py`：定義 Pydantic 輸出模型（齒別資訊、Grad-CAM 路徑、警示訊息等）。
 - `demo_backend/config.py`：集中管理環境變數設定，例如權重路徑、輸出資料夾與啟動預載選項。
 
@@ -61,7 +61,7 @@
 | `DEMO_LAYERED_THRESHOLDS` | 逐層信心門檻 JSON（選用） | 未設定 |
 | `DEMO_OUTPUT_DIR` | 推論輸出（疊圖、CSV）存放目錄 | `demo_backend/outputs` |
 | `DEMO_STATIC_DIR` | 預載樣本與資產根目錄 | `demo_backend/static` |
-| `DEMO_SAMPLES_MANIFEST` | `/demo/samples` 使用的 JSON 清單 | `demo_backend/samples/manifest.json` |
+| `DEMO_SAMPLES_SUBDIR` | 預設樣本所在子資料夾 | `samples` |
 | `DEMO_DEVICE` | 推論裝置（`cuda` 或 `cpu`） | `cuda` |
 | `DEMO_AUTOLOAD` | 啟動時是否預先載入權重 | `false` |
 
@@ -69,22 +69,23 @@
 1. 使用者呼叫 `/demo/infer`，可傳入 `sample_id`（重播預載結果）或直接上傳影像檔。
 2. 管線確保 YOLO 與分類模型已載入，並沿用 `src/infer_cross_cam.py` 的前處理與逐齒推論邏輯。
 3. 推論產生的疊圖、Grad-CAM、CSV 會存放於 `<output_dir>/<request_id>/...`，並以相對路徑（`/demo-outputs/...`）回傳。
-4. 若為內建樣本，API 可直接回傳 manifest 中預先計算好的資源，降低延遲。
+4. 內建樣本與使用者上傳使用相同推論流程；若靜態資料夾內提供對應熱力圖檔案，回傳時會自動帶入路徑。
 
 ### 3.4 樣本資產準備
-- 於 `demo_backend/static/samples/` 放置內建 Demo 影像與對應的 Grad-CAM / 疊圖檔案。
-- 檔名需與 `demo_backend/samples/manifest.json` 中的 `image_path`、`overlay_path`、`cam_paths` 對應，例如 `anterior.png`、`posterior_cam_16.png`。
-- FastAPI 啟動後會將此資料夾掛載為 `/demo-assets/samples/...`，供前端頁面與 API 取用；若缺少檔案，選擇內建樣本時會出現 404 錯誤。
+- 將 PNG / JPG 檔放進 `demo_backend/static/samples/`，檔名（不含副檔名）會直接當作 `sample_id` 使用。
+- 若同資料夾中存在 `{sample_id}_overlay.png` 或 `{sample_id}_cam_<FDI>.png`，API 會自動帶入對應路徑，方便示範預先產生的疊圖與 Grad-CAM。
+- FastAPI 啟動後會將該資料夾掛載為 `/demo-assets/samples/...`，前端選取樣本時若找不到影像檔，會回傳 404 提示。
 
 ## 4. 前端設計重點
 - 位置：`frontend/app/demo/page.tsx`（Client Component）。
+- 頁面以全螢幕獨立樣式呈現，不再共用主系統的 Sidebar/Nav，未登入使用者也能直接存取。
 - 主要功能：
-  - 顯示內建樣本列表，提供「觀看示範」與「重新推論」操作。
-  - 支援使用者上傳影像，並呼叫 `frontend/lib/api.ts` 的 `submitDemoInference`。
-  - 呈現推論疊圖、警示訊息，以及齒別列表與對應的 Grad-CAM 縮圖。
+  - 自動列出靜態樣本，點擊即送出推論並在右側顯示疊圖與逐齒結果。
+  - 支援單檔上傳，完成後可於頁面上直接檢視 overlay、Grad-CAM 與 CSV 下載提示。
+  - 互動式結果表格可切換觀察焦點，若 API 提供 `cam_path` 會同步切換熱力圖視圖。
 - API 工具：
-  - 新增 `fetchDemoSamples` 與 `submitDemoInference`，並保留 mock fallback，便於離線開發。
-  - 共用型別集中於 `frontend/lib/types.ts`，確保前後端資料結構一致。
+  - `fetchDemoSamples` 與 `submitDemoInference` 移除 `rerun` 參數，純粹以 `sampleId` 或檔案輸入觸發推論。
+  - 型別定義維持於 `frontend/lib/types.ts`，並擴充 `DemoSampleSummary` 的 optional 欄位以對應自動偵測的 overlay / cam 路徑。
 
 ## 5. 雲端部署藍圖
 
@@ -137,6 +138,6 @@
 - **資源清理**：排程背景工作定期清除 `demo_backend/outputs/` 舊檔，防止磁碟空間耗盡。
 
 ## 7. 後續優化方向
-- 將 Grad-CAM 產出改為即時計算，支援所有新上傳影像（目前 manifest 內檔案已預先生成）。
+- 將 Grad-CAM 產出改為即時計算，支援所有新上傳影像（目前若需示範可於靜態資料夾預先放置對應檔案）。
 - 引入 WebSocket 或長輪詢回報推論進度，改善大型檔案的使用者體驗。
-- 擴充 manifest 結構，加入臨床評語或嚴重度標籤，提升 Demo 的敘事性。
+- 擴充靜態樣本的中繼資料格式（例如額外 JSON），加入臨床評語或嚴重度標籤，提升 Demo 的敘事性。

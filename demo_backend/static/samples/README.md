@@ -1,14 +1,16 @@
 # Demo 樣本資產
 
-請在此資料夾放置 Demo 用的靜態影像與對應的 Grad-CAM / 疊圖檔案，檔名需與 `demo_backend/samples/manifest.json` 相符，例如：
+請在此資料夾放置 Demo 用的靜態影像，檔名會自動轉換成樣本 ID（取決於檔案名稱，不含副檔名）。
+
+例如：
 
 - `anterior.png`
-- `anterior_overlay.png`
-- `anterior_cam_11.png`
-- `anterior_cam_21.png`
-- `posterior.png`
-- `posterior_overlay.png`
-- `posterior_cam_16.png`
-- `posterior_cam_26.png`
+- `posterior_case.jpg`
+- `root-caries.jpeg`
 
-啟動 FastAPI 服務後，這些檔案會透過 `/demo-assets/samples/...` 路徑提供給前端頁面與 API 使用。
+服務啟動時會自動掃描支援的影像格式（PNG、JPG、JPEG），並以 `/demo-assets/samples/<檔名>` 的相對路徑提供給前端選取。若要預先提供疊圖或 Grad-CAM，可額外放置：
+
+- `{sample_id}_overlay.png`（或 `.jpg`）
+- `{sample_id}_cam_<FDI>.png`
+
+推論結果仍會輸出到 `demo_backend/outputs/` 供下載，若存在上述檔案，API 也會一併回傳對應的靜態路徑。

@@ -19,15 +19,18 @@ class DemoSettings:
     )
     output_dir: Path = Path(os.getenv("DEMO_OUTPUT_DIR", "demo_backend/outputs"))
     static_dir: Path = Path(os.getenv("DEMO_STATIC_DIR", "demo_backend/static"))
-    samples_manifest: Path = Path(
-        os.getenv("DEMO_SAMPLES_MANIFEST", "demo_backend/samples/manifest.json")
-    )
+    samples_subdir: str = os.getenv("DEMO_SAMPLES_SUBDIR", "samples")
     device_preference: str = os.getenv("DEMO_DEVICE", "cuda")
     autoload_model: bool = os.getenv("DEMO_AUTOLOAD", "false").lower() in {"1", "true", "yes"}
 
     def ensure_directories(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.static_dir.mkdir(parents=True, exist_ok=True)
+        (self.static_dir / self.samples_subdir).mkdir(parents=True, exist_ok=True)
+
+    @property
+    def samples_dir(self) -> Path:
+        return self.static_dir / self.samples_subdir
 
     @property
     def device(self) -> str:

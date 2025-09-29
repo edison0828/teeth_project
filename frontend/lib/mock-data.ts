@@ -298,17 +298,7 @@ export const fallbackDemoSamples: DemoSampleListResponse = {
       overlay_path: "/demo-assets/samples/posterior_overlay.png",
       cam_paths: {
         "16": "/demo-assets/samples/posterior_cam_16.png",
-        "26": "/demo-assets/samples/posterior_cam_26.png"
-      },
-      findings: [
-        {
-          fdi: "16",
-          prob_caries: 0.92,
-          thr_used: 0.5,
-          pred: true,
-          bbox: { x1: 180, y1: 110, x2: 320, y2: 240 }
-        }
-      ]
+      }
     }
   ]
 };
@@ -317,6 +307,15 @@ export const fallbackDemoInference: DemoInferenceResult = {
   request_id: "fallback-demo",
   overlay_url: "/demo-assets/samples/posterior_overlay.png",
   csv_url: "",
-  findings: fallbackDemoSamples.items[0].findings,
+  findings: [
+    {
+      fdi: "16",
+      prob_caries: 0.92,
+      thr_used: 0.5,
+      pred: true,
+      bbox: { x1: 180, y1: 110, x2: 320, y2: 240 },
+      cam_path: "/demo-assets/samples/posterior_cam_16.png",
+    }
+  ],
   warnings: ["Using static fallback inference result."]
 };

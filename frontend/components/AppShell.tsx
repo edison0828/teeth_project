@@ -7,9 +7,14 @@ import Sidebar from "./Sidebar";
 import TopNav from "./TopNav";
 
 const AUTH_ROUTES = ["/login", "/register"];
+const PUBLIC_ROUTES = ["/demo"];
 
 function isAuthRoute(pathname: string): boolean {
   return AUTH_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`));
+}
+
+function isPublicRoute(pathname: string): boolean {
+  return PUBLIC_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`));
 }
 
 export default function AppShell({ children }: { children: ReactNode }) {
@@ -22,6 +27,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
         {children}
       </main>
     );
+  }
+
+  if (isPublicRoute(pathname)) {
+    return <main className="min-h-screen bg-slate-950 text-slate-100">{children}</main>;
   }
 
   if (loading || (!user && !guestMode)) {

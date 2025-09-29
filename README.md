@@ -102,7 +102,7 @@ A lightweight FastAPI + Next.js experience is available to showcase the cross-at
 
 - **Backend**: `demo_backend/main.py` exposes `/demo/samples` and `/demo/infer`. Configure weights via environment variables such as `DEMO_YOLO_WEIGHTS` and `DEMO_CLASSIFIER_WEIGHTS`.
 - **Frontend**: visit `/demo` in the Next.js application to browse bundled cases or upload an image.
-- **Static assets**: curated demo samples live in `demo_backend/static/` with metadata in `demo_backend/samples/manifest.json`.
+- **Static assets**: curated demo samples live in `demo_backend/static/samples/`; simply drop PNG/JPG files and the API will auto-discover them.
 - **Outputs**: inference artifacts are stored under `demo_backend/outputs/` and surfaced through `/demo-outputs`.
 
 ### 9. Next Steps & Customization Ideas
@@ -214,6 +214,6 @@ NEXT_PUBLIC_API_BASE_URL="https://your-api.example.com" npm run dev
 
 - **後端**：`demo_backend/main.py` 提供 `/demo/samples` 與 `/demo/infer` 端點，可透過 `DEMO_YOLO_WEIGHTS`、`DEMO_CLASSIFIER_WEIGHTS` 等環境變數指定模型權重。
 - **前端**：在 Next.js 介面中開啟 `/demo` 頁面，即可瀏覽內建樣本或上傳影像查看推論與 Grad-CAM 疊層。
-- **靜態資產**：示範用的影像與熱力圖位於 `demo_backend/static/`，對應的中繼資料儲存在 `demo_backend/samples/manifest.json`。
+- **靜態資產**：示範影像放在 `demo_backend/static/samples/`，只要放入 PNG/JPG 檔即可自動出現在 Demo 頁面。
 - **輸出檔案**：推論產物寫入 `demo_backend/outputs/`，並由 FastAPI 透過 `/demo-outputs` 提供靜態下載。
 
