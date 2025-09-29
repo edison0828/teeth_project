@@ -122,6 +122,91 @@ class CrossAttentionDemoPipeline:
                 model.eval()
                 self._classifier = model
 
+    def _output_url_from_path(self, local_path: Path) -> Optional[str]:
+        if local_path is None:
+            return None
+        candidate = local_path.resolve()
+        if not candidate.exists():
+            return None
+        try:
+            rel = candidate.relative_to(self.settings.output_dir)
+        except ValueError:
+            return None
+        return f"/demo-outputs/{rel.as_posix()}"
+
+    def _read_rows_from_csv(self, csv_path: Path) -> List[Dict[str, object]]:
+        rows: List[Dict[str, object]] = []
+        if not csv_path.exists():
+            return rows
+        with open(csv_path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                rows.append(row)
+        return rows
+
+    def _prepare_findings(self, rows: List[Dict[str, object]]) -> List[Dict[str, object]]:
+        findings: List[Dict[str, object]] = []
+
+        def _safe_float(value: object, default: float = 0.0) -> float:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        def _safe_int(value: object, default: int = 0) -> int:
+            try:
+                return int(float(value))
+            except (TypeError, ValueError):
+                return default
+
+        for row in rows:
+            fdi = str(row.get("fdi", "")).strip()
+            prob = _safe_float(row.get("prob_caries"))
+            thr_used = _safe_float(row.get("thr_used"))
+            pred_raw = row.get("pred")
+            if isinstance(pred_raw, bool):
+                pred_bool = pred_raw
+            else:
+                pred_bool = bool(_safe_int(pred_raw))
+
+            bbox = {
+                "x1": _safe_int(row.get("x1")),
+                "y1": _safe_int(row.get("y1")),
+                "x2": _safe_int(row.get("x2")),
+                "y2": _safe_int(row.get("y2")),
+            }
+
+            cam_url: Optional[str] = None
+            cam_candidate = row.get("cam_path")
+            if cam_candidate:
+                candidate_path = Path(str(cam_candidate))
+                if not candidate_path.is_absolute():
+                    candidate_path = (self.settings.output_dir / candidate_path).resolve()
+                cam_url = self._output_url_from_path(candidate_path)
+
+            roi_url: Optional[str] = None
+            roi_candidate = row.get("roi_path")
+            if roi_candidate:
+                roi_path_candidate = Path(str(roi_candidate))
+                if not roi_path_candidate.is_absolute():
+                    roi_path_candidate = (self.settings.output_dir / roi_path_candidate).resolve()
+                roi_url = self._output_url_from_path(roi_path_candidate)
+
+            findings.append(
+                {
+                    "orig_image": row.get("orig_image"),
+                    "fdi": fdi,
+                    "prob_caries": prob,
+                    "thr_used": thr_used,
+                    "pred": pred_bool,
+                    "bbox": bbox,
+                    "cam_path": cam_url,
+                    "roi_path": roi_url,
+                }
+            )
+
+        return findings
+
     # ------------------------------------------------------------------
     def unload(self) -> None:
         with self._lock:
@@ -130,7 +215,7 @@ class CrossAttentionDemoPipeline:
             torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
     # ------------------------------------------------------------------
-    def predict(self, image_path: Path, request_id: Optional[str] = None) -> DemoPrediction:
+    def predict(self, image_path: Path, request_id: Optional[str] = None, *, only_positive: bool = False) -> DemoPrediction:
         self.ensure_loaded()
         assert self._yolo is not None and self._classifier is not None  # for type checkers
 
@@ -142,6 +227,7 @@ class CrossAttentionDemoPipeline:
             self._base_args,
             clf_path=str(self.settings.classifier_weights),
             save_dir=str(out_dir),
+            draw_normal=not only_positive,
         )
 
         try:
@@ -154,6 +240,8 @@ class CrossAttentionDemoPipeline:
                 FDI_TO_IDX,
                 IDX_TO_FDI,
                 thr_cfg=self._thr_cfg,
+                return_cam=True,
+                only_positive=only_positive,
             )
         except Exception as exc:  # pragma: no cover - defensive path
             shutil.rmtree(out_dir, ignore_errors=True)
@@ -163,32 +251,20 @@ class CrossAttentionDemoPipeline:
             shutil.rmtree(out_dir, ignore_errors=True)
             raise DemoInferenceError("No teeth detected by YOLO detector")
 
-        overlay_path_str, csv_path_str = result
-        overlay_path = Path(overlay_path_str).resolve()
-        csv_path = Path(csv_path_str).resolve()
+        if isinstance(result, tuple) and len(result) == 3:
+            overlay_path_str, csv_path_str, detections = result
+        else:
+            overlay_path_str, csv_path_str = result  # type: ignore[misc]
+            detections = []
+
+        overlay_path = Path(str(overlay_path_str)).resolve()
+        csv_path = Path(str(csv_path_str)).resolve()
 
         if not overlay_path.exists() or not csv_path.exists():
             raise DemoInferenceError("Inference outputs are missing")
 
-        findings: List[Dict[str, object]] = []
-        with open(csv_path, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                findings.append(
-                    {
-                        "orig_image": row.get("orig_image"),
-                        "fdi": row.get("fdi"),
-                        "prob_caries": float(row.get("prob_caries", 0.0)),
-                        "thr_used": float(row.get("thr_used", 0.0)),
-                        "pred": bool(int(row.get("pred", 0))),
-                        "bbox": {
-                            "x1": int(float(row.get("x1", 0))),
-                            "y1": int(float(row.get("y1", 0))),
-                            "x2": int(float(row.get("x2", 0))),
-                            "y2": int(float(row.get("y2", 0))),
-                        },
-                    }
-                )
+        raw_rows = detections if detections else self._read_rows_from_csv(csv_path)
+        findings = self._prepare_findings(raw_rows)
 
         warnings: List[str] = []
         if not findings:

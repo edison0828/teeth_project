@@ -247,6 +247,7 @@ export interface DemoToothFinding {
   bbox: DemoBoundingBox;
   orig_image?: string | null;
   cam_path?: string | null;
+  roi_path?: string | null;
 }
 
 export interface DemoSampleSummary {

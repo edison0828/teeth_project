@@ -32,6 +32,8 @@ class DemoSampleSummary(BaseModel):
 class DemoInferenceFinding(DemoSampleFinding):
     orig_image: Optional[str] = None
     cam_path: Optional[str] = None
+    roi_path: Optional[str] = None
+    roi_path: Optional[str] = None
 
 
 class DemoInferenceResponse(BaseModel):

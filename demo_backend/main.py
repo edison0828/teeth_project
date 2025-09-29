@@ -91,6 +91,7 @@ async def _save_upload(file: UploadFile) -> Path:
 async def run_inference(
     sample_id: Optional[str] = Form(default=None),
     rerun: bool = Form(default=False),
+    only_positive: bool = Form(default=False),
     file: Optional[UploadFile] = File(default=None),
     pipeline: CrossAttentionDemoPipeline = Depends(get_pipeline),
     store: SampleStore = Depends(get_sample_store),
@@ -118,7 +119,11 @@ async def run_inference(
     assert image_path is not None
 
     try:
-        prediction = await run_in_threadpool(pipeline.predict, image_path)
+        prediction = await run_in_threadpool(
+            pipeline.predict,
+            image_path,
+            only_positive=only_positive,
+        )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     except DemoInferenceError as exc:
@@ -129,10 +134,13 @@ async def run_inference(
 
     cam_lookup = sample_meta.cam_paths if sample_meta else {}
 
-    findings = [
-        DemoInferenceFinding(**finding, cam_path=cam_lookup.get(finding.get("fdi")))
-        for finding in prediction.findings
-    ]
+    findings: List[DemoInferenceFinding] = []
+    for finding in prediction.findings:
+        payload = dict(finding)
+        cam_url = payload.pop("cam_path", None) or cam_lookup.get(payload.get("fdi"))
+        roi_url = payload.pop("roi_path", None)
+        findings.append(DemoInferenceFinding(cam_path=cam_url, roi_path=roi_url, **payload))
+
 
     return DemoInferenceResponse(
         request_id=prediction.request_id,

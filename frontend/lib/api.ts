@@ -98,6 +98,7 @@ export async function fetchDemoSamples(): Promise<DemoSampleListResponse> {
 export interface DemoInferenceOptions {
   file?: File;
   sampleId?: string;
+  onlyPositive?: boolean;
 }
 
 export async function submitDemoInference(options: DemoInferenceOptions): Promise<DemoInferenceResult> {
@@ -107,6 +108,9 @@ export async function submitDemoInference(options: DemoInferenceOptions): Promis
   }
   if (options.file) {
     formData.append("file", options.file);
+  }
+  if (options.onlyPositive !== undefined) {
+    formData.append("only_positive", String(options.onlyPositive));
   }
 
   const response = await fetch(`${API_BASE_URL}/demo/infer`, {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent, type WheelEvent } from "react";
 import { fetchDemoSamples, submitDemoInference } from "../../lib/api";
 import type {
   DemoInferenceResult,
@@ -26,6 +26,92 @@ function pickDefaultFinding(findings: DemoToothFinding[]): DemoToothFinding | nu
   return positive ?? findings[0];
 }
 
+function ZoomableImage({ src, alt }: { src: string; alt: string }): JSX.Element {
+  const [scale, setScale] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const originRef = useRef({ x: 0, y: 0 });
+  const offsetRef = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    setScale(1);
+    setOffset({ x: 0, y: 0 });
+  }, [src]);
+
+  const clampScale = (value: number): number => Math.min(6, Math.max(1, value));
+
+  const handleWheel = (event: WheelEvent<HTMLDivElement>): void => {
+    event.preventDefault();
+    const delta = -event.deltaY;
+    setScale((current) => clampScale(current + delta * 0.0015));
+  };
+
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>): void => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setIsPanning(true);
+    originRef.current = { x: event.clientX, y: event.clientY };
+    offsetRef.current = { ...offset };
+  };
+
+  const handlePointerMove = (event: PointerEvent<HTMLDivElement>): void => {
+    if (!isPanning) {
+      return;
+    }
+    event.preventDefault();
+    const dx = event.clientX - originRef.current.x;
+    const dy = event.clientY - originRef.current.y;
+    setOffset({ x: offsetRef.current.x + dx, y: offsetRef.current.y + dy });
+  };
+
+  const finishPan = (event: PointerEvent<HTMLDivElement>): void => {
+    if (!isPanning) {
+      return;
+    }
+    event.preventDefault();
+    try {
+      event.currentTarget.releasePointerCapture?.(event.pointerId);
+    } catch {
+      // ignore release failures
+    }
+    setIsPanning(false);
+  };
+
+  const handleDoubleClick = (): void => {
+    setScale(1);
+    setOffset({ x: 0, y: 0 });
+  };
+
+  return (
+    <div
+      className={`relative h-full w-full overflow-hidden ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
+      onWheel={handleWheel}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={finishPan}
+      onPointerLeave={finishPan}
+      onDoubleClick={handleDoubleClick}
+    >
+      <img
+        src={src}
+        alt={alt}
+        className="h-full w-full select-none object-contain"
+        draggable={false}
+        style={{
+          transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
+          transformOrigin: "center center",
+          transition: isPanning ? "none" : "transform 0.05s ease-out",
+        }}
+      />
+      {scale > 1 ? (
+        <div className="pointer-events-none absolute bottom-3 right-3 rounded-md bg-slate-900/80 px-2 py-1 text-xs text-slate-200">
+          {`${(scale * 100).toFixed(0)}%`}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function DemoPage(): JSX.Element {
   const [samples, setSamples] = useState<DemoSampleSummary[]>([]);
   const [selectedSampleId, setSelectedSampleId] = useState<string | null>(null);
@@ -35,6 +121,7 @@ export default function DemoPage(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<PreviewSource | null>(null);
   const [inputKey, setInputKey] = useState(() => Date.now());
+  const [onlyPositives, setOnlyPositives] = useState(true);
 
   useEffect(() => {
     void (async () => {
@@ -58,9 +145,6 @@ export default function DemoPage(): JSX.Element {
 
   const viewSources = useMemo(() => {
     const overlay = result ? resolveMediaUrl(result.overlay_url) : null;
-    const cam = activeFinding?.cam_path
-      ? resolveMediaUrl(activeFinding.cam_path)
-      : null;
 
     const views: Array<{ key: string; label: string; url: string }> = [];
 
@@ -72,16 +156,8 @@ export default function DemoPage(): JSX.Element {
       views.push({ key: "overlay", label: "推論疊圖", url: overlay });
     }
 
-    if (cam) {
-      views.push({
-        key: "cam",
-        label: activeFinding ? `Grad-CAM（FDI ${activeFinding.fdi}）` : "Grad-CAM",
-        url: cam,
-      });
-    }
-
     return views;
-  }, [preview, result, activeFinding]);
+  }, [preview, result]);
 
   const [activeView, setActiveView] = useState<string>("original");
 
@@ -121,14 +197,14 @@ export default function DemoPage(): JSX.Element {
     resetState();
 
     try {
-      const response = await submitDemoInference({ sampleId: sample.id });
+      const response = await submitDemoInference({ sampleId: sample.id, onlyPositive: onlyPositives });
       setResult(response);
       const finding = pickDefaultFinding(response.findings);
       setActiveFinding(finding);
-      if (finding?.cam_path) {
-        setActiveView("cam");
-      } else if (response.overlay_url) {
+      if (response.overlay_url) {
         setActiveView("overlay");
+      } else {
+        setActiveView("original");
       }
     } catch (err) {
       console.error("Demo inference failed", err);
@@ -153,14 +229,14 @@ export default function DemoPage(): JSX.Element {
     resetState();
 
     try {
-      const response = await submitDemoInference({ file });
+      const response = await submitDemoInference({ file, onlyPositive: onlyPositives });
       setResult(response);
       const finding = pickDefaultFinding(response.findings);
       setActiveFinding(finding);
-      if (finding?.cam_path) {
-        setActiveView("cam");
-      } else if (response.overlay_url) {
+      if (response.overlay_url) {
         setActiveView("overlay");
+      } else {
+        setActiveView("original");
       }
     } catch (err) {
       console.error("Demo upload failed", err);
@@ -172,6 +248,8 @@ export default function DemoPage(): JSX.Element {
   };
 
   const activePreview = viewSources.find((view) => view.key === activeView);
+  const activeCamUrl = activeFinding?.cam_path ? resolveMediaUrl(activeFinding.cam_path) : null;
+  const activeRoiUrl = activeFinding?.roi_path ? resolveMediaUrl(activeFinding.roi_path) : null;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -245,6 +323,25 @@ export default function DemoPage(): JSX.Element {
               </label>
             </div>
 
+            <div className="rounded-xl border border-slate-800/60 bg-slate-900/30 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-white">視覺化設定</p>
+                  <p className="text-xs text-slate-400">切換為只顯示疑似蛀牙時，推論結果會省略正常牙齒的框線與表格列。</p>
+                </div>
+                <label className="flex items-center gap-2 text-sm text-slate-200">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-cyan-400 focus:ring-cyan-400"
+                    checked={onlyPositives}
+                    onChange={(event) => setOnlyPositives(event.target.checked)}
+                    disabled={loading}
+                  />
+                  <span>只顯示疑似蛀牙</span>
+                </label>
+              </div>
+            </div>
+
             <div className="rounded-xl border border-slate-800/60 bg-slate-900/20 p-4 text-xs text-slate-300">
               <p className="font-semibold text-white">使用小提醒</p>
               <ul className="mt-2 space-y-1 list-disc pl-4">
@@ -266,7 +363,7 @@ export default function DemoPage(): JSX.Element {
             <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-6 shadow-xl shadow-slate-900/30">
               <h2 className="text-2xl font-semibold text-white">視覺化結果</h2>
               <p className="mt-1 text-sm text-slate-300">
-                依序切換原圖、推論疊圖與 Grad-CAM 熱力圖，觀察模型在各齒位的注意力分布。
+                依序切換原圖與推論疊圖掌握整體差異，右側可進一步檢視選定牙齒的 ROI 與 Grad-CAM。
               </p>
 
               <div className="mt-4 flex flex-wrap gap-3">
@@ -288,18 +385,47 @@ export default function DemoPage(): JSX.Element {
 
               <div className="mt-4 min-h-[320px] overflow-hidden rounded-xl border border-slate-800 bg-slate-950/60">
                 {activePreview ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={activePreview.url}
-                    alt={activePreview.label}
-                    className="h-full w-full object-contain"
-                  />
+                  <ZoomableImage src={activePreview.url} alt={activePreview.label} />
                 ) : (
                   <div className="flex h-full items-center justify-center px-6 py-12 text-sm text-slate-400">
                     尚未選擇樣本或上傳影像。
                   </div>
                 )}
               </div>
+
+              {activeFinding ? (
+                <div className="mt-4 space-y-4 rounded-xl border border-slate-800 bg-slate-900/45 p-4">
+                  <div className="flex flex-col gap-2 text-sm text-slate-300 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <span className="text-base font-semibold text-white">選取牙齒視圖</span>
+                      <p className="text-xs text-slate-400">顯示原始 ROI 與對應的 Grad-CAM 熱力圖，可雙擊重置縮放。</p>
+                    </div>
+                    <div className="text-xs font-mono text-cyan-200">{`FDI ${activeFinding.fdi} · ${formatProbability(activeFinding.prob_caries)}`}</div>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/60">
+                      <div className="border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-300">原始 ROI</div>
+                      <div className="h-56 p-2">
+                        {activeRoiUrl ? (
+                          <ZoomableImage src={activeRoiUrl} alt={`ROI ${activeFinding.fdi}`} />
+                        ) : (
+                          <div className="flex h-full items-center justify-center text-xs text-slate-500">暫無裁切影像</div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/60">
+                      <div className="border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-300">Grad-CAM</div>
+                      <div className="h-56 p-2">
+                        {activeCamUrl ? (
+                          <ZoomableImage src={activeCamUrl} alt={`Grad-CAM ${activeFinding.fdi}`} />
+                        ) : (
+                          <div className="flex h-full items-center justify-center text-xs text-slate-500">暫無熱力圖</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
 
               {result ? (
                 <div className="mt-6 space-y-4">
@@ -343,9 +469,6 @@ export default function DemoPage(): JSX.Element {
                               key={`${result.request_id}-${finding.fdi}-${finding.bbox.x1}-${finding.bbox.y1}`}
                               onClick={() => {
                                 setActiveFinding(finding);
-                                if (finding.cam_path) {
-                                  setActiveView("cam");
-                                }
                               }}
                               className={`cursor-pointer transition hover:bg-slate-900/60 ${
                                 isSelected ? "bg-slate-900/80" : ""
