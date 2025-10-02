@@ -1,6 +1,7 @@
 # Oral X-Ray Intelligence Platform
 
 ## 🌐 Language / 語言
+
 - [English](#english)
 - [中文](#中文)
 
@@ -12,7 +13,16 @@
 
 The Oral X-Ray Intelligence Platform combines a FastAPI backend, a Next.js 14 (App Router) frontend, and legacy PyTorch training utilities to streamline oral radiograph analysis. It offers interactive dashboards, simulated AI-assisted workflows, and clear extension points for future integrations.
 
-### 2. Repository Layout
+### 2. Demo & Screenshots
+
+<!-- 添加您的網頁截圖 -->
+
+![Cross-Attention Analysis](docs/images/cross-attention-demo.png)
+_Cross-attention Grad-CAM visualization for dental condition detection_
+
+**📺 Demo Video**: [Watch the demo demonstration](https://youtu.be/ONw7fAoHVxE)
+
+### 3. Repository Layout
 
 ```
 teeth_project/
@@ -33,10 +43,10 @@ teeth_project/
 
 ### 3. Prerequisites
 
-| Component | Requirement |
-|-----------|-------------|
-| Backend   | Python 3.10+ and `pip` |
-| Frontend  | Node.js 18+ and `npm` or `yarn` |
+| Component | Requirement                                         |
+| --------- | --------------------------------------------------- |
+| Backend   | Python 3.10+ and `pip`                              |
+| Frontend  | Node.js 18+ and `npm` or `yarn`                     |
 | Optional  | `make` or shell access for running combined scripts |
 
 > **Tip:** Use a Python virtual environment to isolate dependencies and avoid conflicts with other projects.
@@ -81,19 +91,33 @@ NEXT_PUBLIC_API_BASE_URL="https://your-api.example.com" npm run dev
 
 ### 7. API Reference (Development Mode)
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/dashboard/overview` | GET | System summary, queue status, recent patients |
-| `/api/patients` | GET / POST | List existing patients or create new entries |
-| `/api/analyses/{id}` | GET | Retrieve findings for a specific analysis |
-| `/api/images` | POST | Submit an image payload for processing |
-| `/api/analyses` | POST | Kick off a simulated analysis job |
+| Endpoint                  | Method     | Description                                   |
+| ------------------------- | ---------- | --------------------------------------------- |
+| `/api/dashboard/overview` | GET        | System summary, queue status, recent patients |
+| `/api/patients`           | GET / POST | List existing patients or create new entries  |
+| `/api/analyses/{id}`      | GET        | Retrieve findings for a specific analysis     |
+| `/api/images`             | POST       | Submit an image payload for processing        |
+| `/api/analyses`           | POST       | Kick off a simulated analysis job             |
 
 Responses return curated sample payloads that match the design specification, making it easy to develop the UI without real data sources.
 
 ### 8. Legacy Machine Learning Utilities
 
 The original PyTorch scripts located in `src/` remain intact for researchers who need to train or evaluate models. Each script contains inline comments describing expected CSV/DICOM formats and configuration options.
+
+### 10. Cross-Attention Demo
+
+A lightweight FastAPI + Next.js experience is available to showcase the cross-attention Grad-CAM inference pipeline.
+
+![Demo Interface](docs/images/demo-interface.png)
+_Cross-attention demo interface with sample cases and upload functionality_
+
+**🎬 Cross-Attention Demo Video**: [See the AI analysis in action](https://youtu.be/ONw7fAoHVxE)
+
+- **Backend**: `demo_backend/main.py` exposes `/demo/samples` and `/demo/infer`. Configure weights via environment variables such as `DEMO_YOLO_WEIGHTS` and `DEMO_CLASSIFIER_WEIGHTS`.
+- **Frontend**: visit `/demo` in the Next.js application to browse bundled cases or upload an image.
+- **Static assets**: curated demo samples live in `demo_backend/static/samples/`; simply drop PNG/JPG files and the API will auto-discover them.
+- **Outputs**: inference artifacts are stored under `demo_backend/outputs/` and surfaced through `/demo-outputs`.
 
 ### 9. Next Steps & Customization Ideas
 
@@ -110,7 +134,16 @@ The original PyTorch scripts located in `src/` remain intact for researchers who
 
 口腔 X 光智慧平台結合 FastAPI 後端、Next.js 14（App Router）前端以及既有的 PyTorch 訓練工具，提供完整的口腔放射影像分析體驗。系統內建互動式儀表板、模擬 AI 工作流程，並保留向真實服務整合的擴充彈性。
 
-### 2. 專案結構
+### 2. 示範與截圖
+
+<!-- 添加您的網頁截圖 -->
+
+![Cross-Attention 分析](docs/images/cross-attention-demo.png)
+_Cross-attention Grad-CAM 視覺化用於牙科疾病檢測_
+
+**📺 示範影片**: [觀看完整平台演示](https://youtu.be/ONw7fAoHVxE)
+
+### 3. 專案結構
 
 ```
 teeth_project/
@@ -131,10 +164,10 @@ teeth_project/
 
 ### 3. 事前準備
 
-| 組件 | 需求 |
-|------|------|
-| 後端 | Python 3.10 以上與 `pip` |
-| 前端 | Node.js 18 以上與 `npm` 或 `yarn` |
+| 組件 | 需求                                  |
+| ---- | ------------------------------------- |
+| 後端 | Python 3.10 以上與 `pip`              |
+| 前端 | Node.js 18 以上與 `npm` 或 `yarn`     |
 | 選用 | `make` 或終端機環境，用於執行整合腳本 |
 
 > **小提示：** 建議使用 Python 虛擬環境隔離套件，避免與其他專案衝突。
@@ -179,13 +212,13 @@ NEXT_PUBLIC_API_BASE_URL="https://your-api.example.com" npm run dev
 
 ### 7. API 參考（開發模式）
 
-| 路徑 | 方法 | 說明 |
-|------|------|------|
-| `/api/dashboard/overview` | GET | 系統總覽、隊列狀態、最新病患資料 |
-| `/api/patients` | GET / POST | 取得病患列表或新增病患 |
-| `/api/analyses/{id}` | GET | 取得特定分析的詳細結果 |
-| `/api/images` | POST | 上傳影像資料以進行分析 |
-| `/api/analyses` | POST | 建立模擬分析工作 |
+| 路徑                      | 方法       | 說明                             |
+| ------------------------- | ---------- | -------------------------------- |
+| `/api/dashboard/overview` | GET        | 系統總覽、隊列狀態、最新病患資料 |
+| `/api/patients`           | GET / POST | 取得病患列表或新增病患           |
+| `/api/analyses/{id}`      | GET        | 取得特定分析的詳細結果           |
+| `/api/images`             | POST       | 上傳影像資料以進行分析           |
+| `/api/analyses`           | POST       | 建立模擬分析工作                 |
 
 所有回應皆為設計文件對應的範例資料，可在無真實後端整合的情況下完成前端開發。
 
@@ -200,3 +233,14 @@ NEXT_PUBLIC_API_BASE_URL="https://your-api.example.com" npm run dev
 - 依據設計文件導入身分驗證與權限管理（例如 OAuth2 + RBAC）。
 - 將 `models/` 內的實際推論結果整合進分析流程。
 
+### 10. Cross-Attention Demo 示範
+
+![Demo 介面](docs/images/demo-interface.png)
+_Cross-attention demo 介面展示樣本案例與上傳功能_
+
+**🎬 Cross-Attention Demo 影片**: [觀看 AI 分析實際運作](https://youtu.be/ONw7fAoHVxE)
+
+- **後端**：`demo_backend/main.py` 提供 `/demo/samples` 與 `/demo/infer` 端點，可透過 `DEMO_YOLO_WEIGHTS`、`DEMO_CLASSIFIER_WEIGHTS` 等環境變數指定模型權重。
+- **前端**：在 Next.js 介面中開啟 `/demo` 頁面，即可瀏覽內建樣本或上傳影像查看推論與 Grad-CAM 疊層。
+- **靜態資產**：示範影像放在 `demo_backend/static/samples/`，只要放入 PNG/JPG 檔即可自動出現在 Demo 頁面。
+- **輸出檔案**：推論產物寫入 `demo_backend/outputs/`，並由 FastAPI 透過 `/demo-outputs` 提供靜態下載。

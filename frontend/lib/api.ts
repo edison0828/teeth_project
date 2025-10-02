@@ -1,9 +1,11 @@
-import { fallbackAnalysis, fallbackAnalysesSummary, fallbackDashboard, fallbackModels, fallbackPatientDetail, fallbackPatients } from "./mock-data";
+import { fallbackAnalysis, fallbackAnalysesSummary, fallbackDashboard, fallbackDemoInference, fallbackDemoSamples, fallbackModels, fallbackPatientDetail, fallbackPatients } from "./mock-data";
 import type {
   AnalysisDetail,
   AnalysisSummary,
   ChangePasswordRequest,
   DashboardOverview,
+  DemoInferenceResult,
+  DemoSampleListResponse,
   ImageUploadResponse,
   ModelConfig,
   ModelConfigCreateRequest,
@@ -18,7 +20,7 @@ import type {
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
-async function fetchJson<T>(path: string, fallback: T, token?: string): Promise<T> {
+async function fetchJson<T>(path: string, fallback?: T, token?: string): Promise<T> {
   try {
     const headers: HeadersInit = token
       ? {
@@ -40,8 +42,11 @@ async function fetchJson<T>(path: string, fallback: T, token?: string): Promise<
 
     return (await response.json()) as T;
   } catch (error) {
-    console.warn(`Falling back to mock data for ${path}`, error);
-    return fallback;
+    if (fallback !== undefined) {
+      console.warn(`Falling back to mock data for ${path}`, error);
+      return fallback;
+    }
+    throw error instanceof Error ? error : new Error(String(error));
   }
 }
 
@@ -83,6 +88,42 @@ export async function uploadImage(formData: FormData, token?: string): Promise<I
   }
 
   return (await response.json()) as ImageUploadResponse;
+}
+
+
+export async function fetchDemoSamples(): Promise<DemoSampleListResponse> {
+  return fetchJson<DemoSampleListResponse>("/demo/samples");
+}
+
+export interface DemoInferenceOptions {
+  file?: File;
+  sampleId?: string;
+  onlyPositive?: boolean;
+}
+
+export async function submitDemoInference(options: DemoInferenceOptions): Promise<DemoInferenceResult> {
+  const formData = new FormData();
+  if (options.sampleId) {
+    formData.append("sample_id", options.sampleId);
+  }
+  if (options.file) {
+    formData.append("file", options.file);
+  }
+  if (options.onlyPositive !== undefined) {
+    formData.append("only_positive", String(options.onlyPositive));
+  }
+
+  const response = await fetch(`${API_BASE_URL}/demo/infer`, {
+    method: "POST",
+    body: formData,
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(await extractErrorMessage(response));
+  }
+
+  return (await response.json()) as DemoInferenceResult;
 }
 
 export async function fetchModels(token?: string): Promise<ModelConfig[]> {

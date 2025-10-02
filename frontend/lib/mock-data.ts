@@ -1,4 +1,4 @@
-import { type AnalysisDetail, type AnalysisSummary, type DashboardOverview, type ModelConfig, type PatientDetail, type PatientListResponse } from "./types";
+import { type AnalysisDetail, type AnalysisSummary, type DashboardOverview, type ModelConfig, type PatientDetail, type PatientListResponse, type DemoInferenceResult, type DemoSampleListResponse } from "./types";
 
 const nowIso = new Date().toISOString();
 
@@ -287,3 +287,35 @@ export const fallbackModels: ModelConfig[] = [
     updated_at: nowIso
   }
 ];
+
+export const fallbackDemoSamples: DemoSampleListResponse = {
+  items: [
+    {
+      id: "posterior-case",
+      title: "Posterior Bitewing Caries",
+      description: "Synthetic posterior bitewing for demo mode.",
+      image_path: "/demo-assets/samples/posterior.png",
+      overlay_path: "/demo-assets/samples/posterior_overlay.png",
+      cam_paths: {
+        "16": "/demo-assets/samples/posterior_cam_16.png",
+      }
+    }
+  ]
+};
+
+export const fallbackDemoInference: DemoInferenceResult = {
+  request_id: "fallback-demo",
+  overlay_url: "/demo-assets/samples/posterior_overlay.png",
+  csv_url: "",
+  findings: [
+    {
+      fdi: "16",
+      prob_caries: 0.92,
+      thr_used: 0.5,
+      pred: true,
+      bbox: { x1: 180, y1: 110, x2: 320, y2: 240 },
+      cam_path: "/demo-assets/samples/posterior_cam_16.png",
+    }
+  ],
+  warnings: ["Using static fallback inference result."]
+};

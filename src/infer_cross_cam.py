@@ -42,7 +42,7 @@ from torchvision import transforms, models
 from ultralytics import YOLO
 
 # ===== 匯入你的訓練檔（請把檔名改成你自己的檔名） =====
-from train_cross_cam import (
+from src.train_cross_cam import (
     CrossAttnFDI,
     convert_resnet_to_se_resnet,
 )
@@ -55,6 +55,8 @@ FDI_TO_IDX = {'11': 0, '12': 1, '13': 2, '14': 3, '15': 4, '16': 5, '17': 6, '18
               '41': 24, '42': 25, '43': 26, '44': 27, '45': 28, '46': 29, '47': 30, '48': 31, '91': 32}
 IDX_TO_FDI = {v: k for k, v in FDI_TO_IDX.items()}
 
+POSITIVE_COLOR = (40, 180, 255)
+NORMAL_COLOR = (90, 200, 90)
 
 # ---------------- 視覺化輔助 ----------------
 
@@ -68,11 +70,81 @@ def overlay_mask(image_bgr, mask_bin, color=(0, 0, 255), alpha=0.35):
     return overlay
 
 
-def draw_bbox_with_text(img, box, text, color=(0, 0, 255), thick=2):
+def draw_bbox_with_text(img, box, text, color=(40, 180, 255), thick=2):
     x1, y1, x2, y2 = map(int, box)
     cv2.rectangle(img, (x1, y1), (x2, y2), color, thick)
-    cv2.putText(img, text, (x1, max(0, y1 - 6)),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.55
+    font_thickness = 2
+    (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, font_thickness)
+    text_origin_y = y1 - 10
+    if text_origin_y - text_h < 0:
+        text_origin_y = y1 + text_h + 10
+    bg_top = max(0, text_origin_y - text_h - 4)
+    bg_bottom = min(img.shape[0], text_origin_y + baseline + 4)
+    text_origin_x = max(0, min(x1, img.shape[1] - text_w - 10))
+    fill_color = tuple(int(c * 0.35) for c in color)
+    cv2.rectangle(
+        img,
+        (text_origin_x, bg_top),
+        (text_origin_x + text_w + 10, bg_bottom),
+        fill_color,
+        -1,
+    )
+    cv2.putText(
+        img,
+        text,
+        (text_origin_x + 5, text_origin_y),
+        font,
+        font_scale,
+        (245, 245, 245),
+        1,
+        cv2.LINE_AA,
+    )
+
+
+
+def grad_cam_plus_plus(feature_map: torch.Tensor, class_scores: torch.Tensor) -> torch.Tensor:
+    grads = torch.autograd.grad(
+        outputs=class_scores.sum(),
+        inputs=feature_map,
+        retain_graph=True,
+        create_graph=True,
+        allow_unused=True,
+    )[0]
+    if grads is None:
+        return torch.zeros(feature_map.size(0), feature_map.size(2), feature_map.size(3), device=feature_map.device)
+    grads2 = grads.pow(2)
+    grads3 = grads.pow(3)
+    eps = 1e-8
+    sum_grads = (feature_map * grads3).sum(dim=(2, 3), keepdim=True)
+    alpha = grads2 / (2.0 * grads2 + sum_grads + eps)
+    alpha = torch.where(torch.isfinite(alpha), alpha, torch.zeros_like(alpha))
+    positive_grad = F.relu(grads)
+    weights = (alpha * positive_grad).sum(dim=(2, 3))
+    cam = (weights.view(weights.size(0), -1, 1, 1) * feature_map).sum(dim=1)
+    return F.relu(cam)
+
+def create_cam_visualization(roi_image: np.ndarray, cam_map: np.ndarray, color=POSITIVE_COLOR):
+    if roi_image is None or roi_image.size == 0:
+        return None
+    h, w = roi_image.shape[:2]
+    if h == 0 or w == 0:
+        return None
+    cam_norm = cam_map - cam_map.min()
+    max_val = cam_norm.max()
+    if max_val > 0:
+        cam_norm = cam_norm / (max_val + 1e-6)
+    else:
+        cam_norm = np.zeros_like(cam_norm, dtype=np.float32)
+    cam_resized = cv2.resize(cam_norm.astype(np.float32), (w, h), interpolation=cv2.INTER_LINEAR)
+    heatmap = cv2.applyColorMap((cam_resized * 255).astype(np.uint8), cv2.COLORMAP_TURBO)
+    overlay = cv2.addWeighted(roi_image, 0.35, heatmap, 0.65, 0)
+    border_color = tuple(int(c) for c in color)
+    cv2.rectangle(overlay, (0, 0), (w - 1, h - 1), border_color, 2)
+    return overlay
+
+
 
 # ---------------- FDI / 門檻分層 ----------------
 
@@ -200,7 +272,7 @@ def build_classifier(args, num_fdi: int):
 # ---------------- 逐張影像推論 ----------------
 
 
-def infer_one_image(img_path, yolo, clf_model, device, args, fdi_to_idx, idx_to_fdi, thr_cfg=None):
+def infer_one_image(img_path, yolo, clf_model, device, args, fdi_to_idx, idx_to_fdi, thr_cfg=None, return_cam=False, only_positive=False):
     img_bgr = cv2.imread(img_path)
     if img_bgr is None:
         raise FileNotFoundError(f"讀不到影像：{img_path}")
@@ -218,28 +290,27 @@ def infer_one_image(img_path, yolo, clf_model, device, args, fdi_to_idx, idx_to_
     masks_full = None
     if r.masks is not None and len(r.masks.data) > 0:
         masks = r.masks.data.cpu().numpy()  # (N, h', w')
-        # 放大到原圖大小
         masks_full = cv2.resize(
             masks.transpose(1, 2, 0), (W, H), interpolation=cv2.INTER_NEAREST
         ).transpose(2, 0, 1)  # -> (N,H,W) {0/1}
 
-    # ROI 前處理（與訓練一致）
     tfm = transforms.Compose([
         transforms.Resize((args.patch_size, args.patch_size)),
         transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406],
-                             [0.229, 0.224, 0.225]),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ])
 
     morph_kernel = cv2.getStructuringElement(
         cv2.MORPH_ELLIPSE, (args.dilate_kernel, args.dilate_kernel)
     )
 
-    roi_tensors, fdi_indices, meta = [], [], []
-    os.makedirs(os.path.join(args.save_dir, "rois"),
-                exist_ok=True) if args.dump_rois else None
+    os.makedirs(args.save_dir, exist_ok=True)
+    if args.dump_rois:
+        os.makedirs(os.path.join(args.save_dir, "rois"), exist_ok=True)
 
-    # 蒐集每顆牙 ROI
+    roi_tensors, fdi_indices, meta = [], [], []
+    roi_images: List[np.ndarray] = []
+
     for i in range(len(boxes)):
         x1, y1, x2, y2 = boxes[i]
         x1, y1 = max(0, x1), max(0, y1)
@@ -247,15 +318,14 @@ def infer_one_image(img_path, yolo, clf_model, device, args, fdi_to_idx, idx_to_
         if x2 <= x1 or y2 <= y1:
             continue
 
-        # FDI 轉成與訓練一致的 index
         raw_name = yolo.names[int(clses[i])]
         fdi_str = normalize_fdi_label(raw_name)
         if fdi_str not in fdi_to_idx:
-            # 不在詞彙表內就跳過（避免 index 對不上）
             continue
         fdi_idx = fdi_to_idx[fdi_str]
 
-        patch = img_bgr[y1:y2, x1:x2].copy()
+        roi_patch = img_bgr[y1:y2, x1:x2].copy()
+        patch = roi_patch.copy()
 
         use_mask = (
             args.roi_style == "mask"
@@ -264,60 +334,82 @@ def infer_one_image(img_path, yolo, clf_model, device, args, fdi_to_idx, idx_to_
         )
 
         if use_mask:
-            mask_local = (masks_full[i][y1:y2, x1:x2]
-                          > 0).astype(np.uint8) * 255
+            mask_local = (masks_full[i][y1:y2, x1:x2] > 0).astype(np.uint8) * 255
             if args.dilate_iter > 0:
                 mask_local = cv2.dilate(
-                    mask_local, morph_kernel, iterations=args.dilate_iter)
+                    mask_local, morph_kernel, iterations=args.dilate_iter
+                )
             if args.smooth_blur:
                 mask_local = cv2.morphologyEx(
-                    mask_local, cv2.MORPH_CLOSE, morph_kernel, iterations=args.smooth_iters)
+                    mask_local, cv2.MORPH_CLOSE, morph_kernel, iterations=args.smooth_iters
+                )
             if args.apply_gaussian:
                 mask_local = cv2.GaussianBlur(mask_local, (5, 5), 2)
-            _, mask_local = cv2.threshold(
-                mask_local, 127, 255, cv2.THRESH_BINARY)
-            patch[(mask_local // 255) == 0] = 0  # 只有 mask 模式才抠掉背景
+            _, mask_local = cv2.threshold(mask_local, 127, 255, cv2.THRESH_BINARY)
+            patch[(mask_local // 255) == 0] = 0
 
-        # 統一 resize + norm
-        pil = Image.fromarray(cv2.cvtColor(
-            cv2.resize(patch, (args.patch_size, args.patch_size)), cv2.COLOR_BGR2RGB))
+        pil = Image.fromarray(
+            cv2.cvtColor(cv2.resize(patch, (args.patch_size, args.patch_size)), cv2.COLOR_BGR2RGB)
+        )
         roi_tensors.append(tfm(pil))
         fdi_indices.append(fdi_idx)
         meta.append({
-            "x1": int(x1), "y1": int(y1), "x2": int(x2), "y2": int(y2),
-            "fdi": fdi_str, "det_idx": int(i)
+            "x1": int(x1),
+            "y1": int(y1),
+            "x2": int(x2),
+            "y2": int(y2),
+            "fdi": fdi_str,
+            "det_idx": int(i),
         })
+        roi_images.append(roi_patch)
 
         if args.dump_rois:
-            out_p = os.path.join(args.save_dir, "rois",
-                                 f"{os.path.splitext(os.path.basename(img_path))[0]}_{i}_{fdi_str}.png")
-            cv2.imwrite(out_p, patch)
+            out_p = os.path.join(
+                args.save_dir,
+                "rois",
+                f"{os.path.splitext(os.path.basename(img_path))[0]}_{i}_{fdi_str}.png",
+            )
+            cv2.imwrite(out_p, roi_patch)
 
     if not roi_tensors:
         print(f"[WARN] 無可用 ROI：{os.path.basename(img_path)}")
         return None
 
-    # 批次推論
     clf_model.eval()
-    with torch.no_grad():
-        batch = torch.stack(roi_tensors).to(device)
-        fdis = torch.tensor(fdi_indices, dtype=torch.long, device=device)
-        logits = clf_model(batch, fdis)            # [N,2]
-        probs = F.softmax(logits, dim=1)[:, 1]     # p(caries)
+    batch = torch.stack(roi_tensors).to(device)
+    fdis = torch.tensor(fdi_indices, dtype=torch.long, device=device)
+    cams_np = None
+
+    if return_cam:
+        clf_model.zero_grad(set_to_none=True)
+        with torch.enable_grad():
+            batch.requires_grad_(True)
+            logits, feat, _ = clf_model(batch, fdis, return_feat_for_cam=True)
+            class_scores = logits[:, 1]
+            probs = F.softmax(logits, dim=1)[:, 1]
+            cams = grad_cam_plus_plus(feat, class_scores)
+        cams_np = cams.detach().cpu().numpy()
         probs = probs.detach().cpu().numpy()
-
-    # 門檻選擇器
-    if args.thr_mode == "fixed":
-        def thr_picker(fdi_idx): return args.threshold
-    elif args.thr_mode == "layered":
-        def thr_picker(fdi_idx): return pick_threshold_for_tooth(
-            fdi_idx, thr_cfg, args.threshold, idx_to_fdi)
+        clf_model.zero_grad(set_to_none=True)
     else:
-        def thr_picker(fdi_idx): return args.threshold
+        with torch.no_grad():
+            logits = clf_model(batch, fdis)
+            probs = F.softmax(logits, dim=1)[:, 1].detach().cpu().numpy()
 
-    # 疊回原圖 & 生成逐齒 rows
+    if args.thr_mode == "fixed":
+        def thr_picker(fdi_idx):
+            return args.threshold
+    elif args.thr_mode == "layered":
+        def thr_picker(fdi_idx):
+            return pick_threshold_for_tooth(fdi_idx, thr_cfg, args.threshold, idx_to_fdi)
+    else:
+        def thr_picker(fdi_idx):
+            return args.threshold
+
     vis = img_bgr.copy()
     rows = []
+    base = os.path.splitext(os.path.basename(img_path))[0]
+
     for k, m in enumerate(meta):
         p = float(probs[k])
         fdi_idx = fdi_indices[k]
@@ -325,59 +417,86 @@ def infer_one_image(img_path, yolo, clf_model, device, args, fdi_to_idx, idx_to_
         pred = int(p >= thr)
 
         x1, y1, x2, y2 = m["x1"], m["y1"], m["x2"], m["y2"]
+        label_positive = f"FDI {m['fdi']} | {p * 100:.1f}%"
+        label_normal = f"FDI {m['fdi']} | Normal"
+        include_detection = True
+        cam_filename = None
+        roi_filename = None
 
         if pred == 1:
-            # 疊 mask（若有）+ 畫框與文字
             if masks_full is not None and m["det_idx"] < masks_full.shape[0]:
-                mask_local = (masks_full[m["det_idx"]][y1:y2, x1:x2] > 0).astype(
-                    np.uint8) * 255
+                mask_local = (masks_full[m["det_idx"]][y1:y2, x1:x2] > 0).astype(np.uint8) * 255
                 if args.dilate_iter > 0:
-                    mask_local = cv2.dilate(
-                        mask_local, morph_kernel, iterations=args.dilate_iter)
+                    mask_local = cv2.dilate(mask_local, morph_kernel, iterations=args.dilate_iter)
                 if args.smooth_blur:
                     mask_local = cv2.morphologyEx(
-                        mask_local, cv2.MORPH_CLOSE, morph_kernel, iterations=args.smooth_iters)
+                        mask_local, cv2.MORPH_CLOSE, morph_kernel, iterations=args.smooth_iters
+                    )
                 if args.apply_gaussian:
                     mask_local = cv2.GaussianBlur(mask_local, (5, 5), 2)
-                _, mask_local = cv2.threshold(
-                    mask_local, 127, 255, cv2.THRESH_BINARY)
+                _, mask_local = cv2.threshold(mask_local, 127, 255, cv2.THRESH_BINARY)
                 mask_local = (mask_local // 255).astype(np.uint8)
                 vis[y1:y2, x1:x2] = overlay_mask(
-                    vis[y1:y2, x1:x2], mask_local, color=(0, 0, 255), alpha=0.35)
+                    vis[y1:y2, x1:x2], mask_local, color=POSITIVE_COLOR, alpha=0.45
+                )
             draw_bbox_with_text(
-                vis, (x1, y1, x2, y2),
-                text=f"FDI {m['fdi']} | p={p:.2f} thr={thr:.2f}",
-                color=(0, 0, 255), thick=2
+                vis,
+                (x1, y1, x2, y2),
+                text=label_positive,
+                color=POSITIVE_COLOR,
+                thick=2,
             )
         else:
-            if args.draw_normal:
+            if only_positive:
+                include_detection = False
+            elif args.draw_normal:
                 draw_bbox_with_text(
-                    vis, (x1, y1, x2, y2),
-                    text=f"FDI {m['fdi']} | p={p:.2f}",
-                    color=(0, 200, 0), thick=1
+                    vis,
+                    (x1, y1, x2, y2),
+                    text=label_normal,
+                    color=NORMAL_COLOR,
+                    thick=1,
                 )
+
+        if return_cam and roi_images:
+            roi_image = roi_images[k]
+            roi_filename = os.path.join(args.save_dir, f"{base}_roi_{k:02d}_{m['fdi']}.png")
+            cv2.imwrite(roi_filename, roi_image)
+            if cams_np is not None:
+                cam_map = cams_np[k]
+                cam_vis = create_cam_visualization(roi_image, cam_map)
+                if cam_vis is not None:
+                    cam_filename = os.path.join(
+                        args.save_dir, f"{base}_cam_{k:02d}_{m['fdi']}.png"
+                    )
+                    cv2.imwrite(cam_filename, cam_vis)
+
+        if not include_detection:
+            continue
 
         rows.append({
             "orig_image": os.path.basename(img_path),
             "fdi": m["fdi"],
-            "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+            "x1": x1,
+            "y1": y1,
+            "x2": x2,
+            "y2": y2,
             "prob_caries": p,
             "thr_used": thr,
-            "pred": int(pred)  # 1=caries, 0=normal
+            "pred": int(pred),
+            "cam_path": cam_filename,
+            "roi_path": roi_filename,
         })
 
-    base = os.path.splitext(os.path.basename(img_path))[0]
-    os.makedirs(args.save_dir, exist_ok=True)
     out_img = os.path.join(args.save_dir, f"{base}_caries_overlay.png")
     cv2.imwrite(out_img, vis)
 
     out_csv = os.path.join(args.save_dir, f"{base}_per_tooth.csv")
     pd.DataFrame(rows).to_csv(out_csv, index=False)
 
+    if return_cam:
+        return out_img, out_csv, rows
     return out_img, out_csv
-
-# ---------------- 主程式 ----------------
-
 
 def main():
     ap = argparse.ArgumentParser()
