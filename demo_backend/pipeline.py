@@ -12,7 +12,7 @@ import csv
 import torch
 from ultralytics import YOLO
 
-from src.infer_cross_cam import (
+from ._vendor.infer_cross_cam import (
     FDI_TO_IDX,
     IDX_TO_FDI,
     build_classifier,

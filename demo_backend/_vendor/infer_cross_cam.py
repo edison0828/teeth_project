@@ -42,7 +42,7 @@ from torchvision import transforms, models
 from ultralytics import YOLO
 
 # ===== 匯入你的訓練檔（請把檔名改成你自己的檔名） =====
-from src.train_cross_cam import (
+from .train_cross_cam import (
     CrossAttnFDI,
     convert_resnet_to_se_resnet,
 )
