@@ -190,6 +190,4 @@ teeth_project/
 1. 執行 `uvicorn demo_backend.main:app --reload` 啟動後端。
 2. 打開 `http://localhost:3000/demo`，選擇內建樣本或自行上傳影像。
 3. 瀏覽推論結果、啟用 Grad-CAM 疊層、放大/縮小影像並查詢特定 FDI 牙位。
-4. 透過介面上的連結下載疊層影像或 CSV 結果檔案。
-
-Enjoy exploring the cross-attention dental X-ray demo! / 祝您展示順利 🎉
+<!-- 4. 透過介面上的連結下載疊層影像或 CSV 結果檔案。 -->
