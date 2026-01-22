@@ -26,7 +26,7 @@ function formatProbability(value: number): string {
 }
 
 function pickDefaultFinding(
-  findings: DemoToothFinding[]
+  findings: DemoToothFinding[],
 ): DemoToothFinding | null {
   if (findings.length === 0) {
     return null;
@@ -64,7 +64,7 @@ function ZoomableImage({
   } | null>(null);
   const [isSelecting, setIsSelecting] = useState(false);
   const initialViewBoxRef = useRef<[number, number, number, number] | null>(
-    null
+    null,
   );
   const viewBoxRef = useRef<[number, number, number, number] | null>(null);
   const selectionStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -256,7 +256,7 @@ function ZoomableImage({
     }
     return viewBox.every(
       (value, index) =>
-        Math.abs(value - initialViewBoxRef.current![index]) < 1e-3
+        Math.abs(value - initialViewBoxRef.current![index]) < 1e-3,
     );
   })();
 
@@ -313,13 +313,14 @@ export default function DemoPage(): JSX.Element {
   const [selectedSampleId, setSelectedSampleId] = useState<string | null>(null);
   const [result, setResult] = useState<DemoInferenceResult | null>(null);
   const [activeFinding, setActiveFinding] = useState<DemoToothFinding | null>(
-    null
+    null,
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<PreviewSource | null>(null);
   const [inputKey, setInputKey] = useState(() => Date.now());
   const [onlyPositives, setOnlyPositives] = useState(true);
+  const [modelType, setModelType] = useState<string>("cross");
   const [sharedZoomView, setSharedZoomView] = useState<
     [number, number, number, number] | null
   >(null);
@@ -338,7 +339,7 @@ export default function DemoPage(): JSX.Element {
     }
 
     const safeParse = (value: string | undefined, fallback = 0) => {
-      const parsed = Number.parseInt(value ?? '', 10);
+      const parsed = Number.parseInt(value ?? "", 10);
       return Number.isNaN(parsed) ? fallback : parsed;
     };
 
@@ -357,9 +358,9 @@ export default function DemoPage(): JSX.Element {
     if (!term) {
       return sorted;
     }
-    const normalized = term.replace(/\s+/g, '').toLowerCase();
+    const normalized = term.replace(/\s+/g, "").toLowerCase();
     return sorted.filter((finding) =>
-      finding.fdi.toLowerCase().includes(normalized)
+      finding.fdi.toLowerCase().includes(normalized),
     );
   }, [result, toothSearch]);
 
@@ -442,6 +443,7 @@ export default function DemoPage(): JSX.Element {
       const response = await submitDemoInference({
         sampleId: sample.id,
         onlyPositive: onlyPositives,
+        modelType,
       });
       setResult(response);
       const finding = pickDefaultFinding(response.findings);
@@ -463,7 +465,7 @@ export default function DemoPage(): JSX.Element {
   };
 
   const handleUpload = async (
-    event: ChangeEvent<HTMLInputElement>
+    event: ChangeEvent<HTMLInputElement>,
   ): Promise<void> => {
     if (!event.target.files || event.target.files.length === 0) {
       return;
@@ -482,6 +484,7 @@ export default function DemoPage(): JSX.Element {
       const response = await submitDemoInference({
         file,
         onlyPositive: onlyPositives,
+        modelType,
       });
       setResult(response);
       const finding = pickDefaultFinding(response.findings);
@@ -531,10 +534,10 @@ export default function DemoPage(): JSX.Element {
             <div className="space-y-3">
               <h2 className="text-xl font-semibold text-white">預設樣本</h2>
               <p className="text-sm text-slate-300">
-                專案會自動掃描{' '}
+                專案會自動掃描{" "}
                 <code className="rounded bg-slate-800 px-1.5 py-0.5 text-xs">
                   demo_backend/static/samples
-                </code>{' '}
+                </code>{" "}
                 內的影像。
               </p>
               <button
@@ -543,12 +546,16 @@ export default function DemoPage(): JSX.Element {
                 disabled={samples.length === 0 || loading}
                 className="w-full rounded-xl border border-cyan-400/60 bg-slate-900/40 px-4 py-3 text-sm font-semibold text-cyan-200 transition hover:bg-slate-800/60 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {samples.length === 0 ? '尚無可用樣本' : '瀏覽預設樣本'}
+                {samples.length === 0 ? "尚無可用樣本" : "瀏覽預設樣本"}
               </button>
               {selectedSample ? (
                 <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-xs text-slate-300">
-                  <div className="font-semibold text-white">目前選取：{selectedSample.title}</div>
-                  <div className="mt-1 text-slate-400">{selectedSample.description}</div>
+                  <div className="font-semibold text-white">
+                    目前選取：{selectedSample.title}
+                  </div>
+                  <div className="mt-1 text-slate-400">
+                    {selectedSample.description}
+                  </div>
                 </div>
               ) : null}
             </div>
@@ -575,21 +582,37 @@ export default function DemoPage(): JSX.Element {
             <div className="rounded-xl border border-slate-800/60 bg-slate-900/30 p-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-sm font-semibold text-white">視覺化設定</p>
+                  <p className="text-sm font-semibold text-white">推論設定</p>
                   <p className="text-xs text-slate-400">
-                    切換為只顯示疑似蛀牙時，推論結果會省略正常牙齒的框線與表格列。
+                    選擇使用的模型架構與視覺化選項。
                   </p>
                 </div>
-                <label className="flex items-center gap-2 text-sm text-slate-200">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-cyan-400 focus:ring-cyan-400"
-                    checked={onlyPositives}
-                    onChange={(event) => setOnlyPositives(event.target.checked)}
-                    disabled={loading}
-                  />
-                  <span>只顯示疑似蛀牙</span>
-                </label>
+                <div className="flex flex-col gap-2">
+                  <label className="flex items-center gap-2 text-sm text-slate-200">
+                    <span className="text-xs text-slate-400">模型：</span>
+                    <select
+                      value={modelType}
+                      onChange={(e) => setModelType(e.target.value)}
+                      disabled={loading}
+                      className="rounded bg-slate-950 border-slate-700 px-2 py-1 text-xs text-slate-200 focus:ring-cyan-400"
+                    >
+                      <option value="cross">Cross Attention</option>
+                      <option value="swin">Swin Transformer</option>
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-slate-200">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-cyan-400 focus:ring-cyan-400"
+                      checked={onlyPositives}
+                      onChange={(event) =>
+                        setOnlyPositives(event.target.checked)
+                      }
+                      disabled={loading}
+                    />
+                    <span>只顯示疑似蛀牙</span>
+                  </label>
+                </div>
               </div>
             </div>
 
@@ -656,8 +679,6 @@ export default function DemoPage(): JSX.Element {
                 )}
               </div>
 
-              
-
               {result ? (
                 <div className="mt-6 space-y-4">
                   <div className="flex flex-col gap-2 text-sm text-slate-300 lg:flex-row lg:items-center lg:justify-between">
@@ -692,7 +713,8 @@ export default function DemoPage(): JSX.Element {
                                 選取牙齒視圖
                               </span>
                               <p className="text-xs text-slate-400">
-                                顯示原始 ROI 與對應的 Grad-CAM 熱力圖，可雙擊重置縮放。
+                                顯示原始 ROI 與對應的 Grad-CAM
+                                熱力圖，可雙擊重置縮放。
                               </p>
                             </div>
                             <div className="text-xs font-mono text-cyan-200">
@@ -742,7 +764,8 @@ export default function DemoPage(): JSX.Element {
                         </div>
                       ) : (
                         <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/30 p-6 text-sm text-slate-400">
-                          請於右側快速列表或下方表格點選牙齒，以查看對應的 ROI 與 Grad-CAM。
+                          請於右側快速列表或下方表格點選牙齒，以查看對應的 ROI
+                          與 Grad-CAM。
                         </div>
                       )}
 
@@ -751,11 +774,15 @@ export default function DemoPage(): JSX.Element {
                           <thead>
                             <tr className="bg-slate-900/60 text-left text-slate-200">
                               <th className="px-3 py-2 font-medium">FDI</th>
-                              <th className="px-3 py-2 font-medium">蛀牙機率</th>
+                              <th className="px-3 py-2 font-medium">
+                                蛀牙機率
+                              </th>
                               <th className="px-3 py-2 font-medium">門檻</th>
                               <th className="px-3 py-2 font-medium">判定</th>
                               <th className="px-3 py-2 font-medium">偵測框</th>
-                              <th className="px-3 py-2 font-medium">Grad-CAM</th>
+                              <th className="px-3 py-2 font-medium">
+                                Grad-CAM
+                              </th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-800/60">
@@ -802,7 +829,8 @@ export default function DemoPage(): JSX.Element {
                                     </span>
                                   </td>
                                   <td className="px-3 py-2 font-mono text-xs text-slate-300">
-                                    [{finding.bbox.x1}, {finding.bbox.y1}] → [{finding.bbox.x2}, {finding.bbox.y2}]
+                                    [{finding.bbox.x1}, {finding.bbox.y1}] → [
+                                    {finding.bbox.x2}, {finding.bbox.y2}]
                                   </td>
                                   <td className="px-3 py-2">
                                     {camUrl ? (
@@ -837,7 +865,9 @@ export default function DemoPage(): JSX.Element {
                     </div>
                     <aside className="flex h-full flex-col rounded-xl border border-slate-800 bg-slate-900/30 p-4">
                       <div className="flex items-center justify-between gap-3">
-                        <h3 className="text-sm font-semibold text-white">牙位快速選擇</h3>
+                        <h3 className="text-sm font-semibold text-white">
+                          牙位快速選擇
+                        </h3>
                         <span className="text-xs text-slate-400">
                           {filteredFindings.length}/{result.findings.length}
                         </span>
@@ -850,7 +880,9 @@ export default function DemoPage(): JSX.Element {
                           id="tooth-search"
                           type="text"
                           value={toothSearch}
-                          onChange={(event) => setToothSearch(event.target.value)}
+                          onChange={(event) =>
+                            setToothSearch(event.target.value)
+                          }
                           placeholder="輸入 FDI 牙位"
                           className="w-full rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-400/40"
                         />
@@ -885,7 +917,9 @@ export default function DemoPage(): JSX.Element {
                                   </span>
                                   <span
                                     className={`text-xs ${
-                                      finding.pred ? "text-red-300" : "text-slate-400"
+                                      finding.pred
+                                        ? "text-red-300"
+                                        : "text-slate-400"
                                     }`}
                                   >
                                     {finding.pred ? "疑似蛀牙" : "正常"}
@@ -898,14 +932,15 @@ export default function DemoPage(): JSX.Element {
                             );
                           })
                         ) : (
-                          <p className="text-sm text-slate-400">找不到符合的牙位</p>
+                          <p className="text-sm text-slate-400">
+                            找不到符合的牙位
+                          </p>
                         )}
                       </div>
                     </aside>
                   </div>
                 </div>
               ) : null}
-
             </div>
           </section>
         </div>
@@ -931,11 +966,14 @@ export default function DemoPage(): JSX.Element {
                 ×
               </button>
             </div>
-            <p className="mt-1 text-sm text-slate-300">請挑選要套用的預設樣本，系統會立即觸發推論。</p>
+            <p className="mt-1 text-sm text-slate-300">
+              請挑選要套用的預設樣本，系統會立即觸發推論。
+            </p>
             <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {samples.length > 0 ? (
                 samples.map((sample) => {
-                  const previewUrl = resolveMediaUrl(sample.image_path) ?? sample.image_path;
+                  const previewUrl =
+                    resolveMediaUrl(sample.image_path) ?? sample.image_path;
                   const isActive = sample.id === selectedSampleId;
                   return (
                     <button
@@ -944,7 +982,9 @@ export default function DemoPage(): JSX.Element {
                       onClick={() => void handleSample(sample)}
                       disabled={loading}
                       className={`group flex flex-col overflow-hidden rounded-xl border p-3 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/80 ${
-                        isActive ? 'border-cyan-400/80 bg-slate-800/70' : 'border-slate-800 bg-slate-900/40 hover:border-cyan-400/60'
+                        isActive
+                          ? "border-cyan-400/80 bg-slate-800/70"
+                          : "border-slate-800 bg-slate-900/40 hover:border-cyan-400/60"
                       } disabled:cursor-not-allowed disabled:opacity-60`}
                     >
                       {previewUrl ? (
@@ -955,8 +995,12 @@ export default function DemoPage(): JSX.Element {
                           className="mb-3 h-32 w-full rounded-lg object-cover"
                         />
                       ) : null}
-                      <span className="text-sm font-semibold text-white">{sample.title}</span>
-                      <span className="mt-1 text-xs text-slate-300">{sample.description}</span>
+                      <span className="text-sm font-semibold text-white">
+                        {sample.title}
+                      </span>
+                      <span className="mt-1 text-xs text-slate-300">
+                        {sample.description}
+                      </span>
                     </button>
                   );
                 })

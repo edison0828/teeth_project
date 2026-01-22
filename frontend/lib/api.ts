@@ -1,6 +1,7 @@
 import type { DemoInferenceResult, DemoSampleListResponse } from "./types";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
 async function fetchJson<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -22,9 +23,12 @@ export interface DemoInferenceOptions {
   file?: File;
   sampleId?: string;
   onlyPositive?: boolean;
+  modelType?: string;
 }
 
-export async function submitDemoInference(options: DemoInferenceOptions): Promise<DemoInferenceResult> {
+export async function submitDemoInference(
+  options: DemoInferenceOptions,
+): Promise<DemoInferenceResult> {
   const formData = new FormData();
   if (options.sampleId) {
     formData.append("sample_id", options.sampleId);
@@ -34,6 +38,9 @@ export async function submitDemoInference(options: DemoInferenceOptions): Promis
   }
   if (options.onlyPositive !== undefined) {
     formData.append("only_positive", String(options.onlyPositive));
+  }
+  if (options.modelType) {
+    formData.append("model_type", options.modelType);
   }
 
   const response = await fetch(`${API_BASE_URL}/demo/infer`, {

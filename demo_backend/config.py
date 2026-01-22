@@ -16,6 +16,9 @@ class DemoSettings:
     classifier_weights: Path = Path(
         os.getenv("DEMO_CLASSIFIER_WEIGHTS", "models/cross_attn_fdi_camAlignA.pth")
     )
+    swin_weights: Path = Path(
+        os.getenv("DEMO_SWIN_WEIGHTS", "models/swin_fdi_final.pth")
+    )
     layered_thresholds: Optional[Path] = (
         Path(thr_path) if (thr_path := os.getenv("DEMO_LAYERED_THRESHOLDS")) else None
     )
@@ -34,6 +37,7 @@ class DemoSettings:
         self.static_dir = self._resolve_path(self.static_dir)
         self.yolo_weights = self._resolve_path(self.yolo_weights)
         self.classifier_weights = self._resolve_path(self.classifier_weights)
+        self.swin_weights = self._resolve_path(self.swin_weights)
         if self.layered_thresholds is not None:
             self.layered_thresholds = self._resolve_path(self.layered_thresholds)
 

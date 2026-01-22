@@ -92,6 +92,7 @@ async def run_inference(
     sample_id: Optional[str] = Form(default=None),
     rerun: bool = Form(default=False),
     only_positive: bool = Form(default=False),
+    model_type: str = Form(default="cross"),
     file: Optional[UploadFile] = File(default=None),
     pipeline: CrossAttentionDemoPipeline = Depends(get_pipeline),
     store: SampleStore = Depends(get_sample_store),
@@ -123,6 +124,7 @@ async def run_inference(
             pipeline.predict,
             image_path,
             only_positive=only_positive,
+            model_type=model_type,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc

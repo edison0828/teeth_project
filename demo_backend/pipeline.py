@@ -18,6 +18,10 @@ from ._vendor.infer_cross_cam import (
     build_classifier,
     infer_one_image,
 )
+from ._vendor.infer_swin_cam import (
+    build_swin_classifier,
+    infer_one_image_swin,
+)
 
 from .config import DemoSettings
 
@@ -84,6 +88,7 @@ class CrossAttentionDemoPipeline:
         self._lock = Lock()
         self._yolo: Optional[YOLO] = None
         self._classifier: Optional[torch.nn.Module] = None
+        self._swin_classifier: Optional[torch.nn.Module] = None
         self._thr_cfg: Optional[Dict[str, object]] = None
         self._base_args = DemoInferenceArgs(
             clf_path=str(settings.classifier_weights),
@@ -101,7 +106,7 @@ class CrossAttentionDemoPipeline:
             self._base_args = replace(self._base_args, thr_mode="layered")
 
     # ------------------------------------------------------------------
-    def ensure_loaded(self) -> None:
+    def ensure_loaded(self, required_model: str = "cross") -> None:
         with self._lock:
             if self._yolo is None:
                 if not self.settings.yolo_weights.exists():
@@ -111,7 +116,7 @@ class CrossAttentionDemoPipeline:
                 self._yolo = YOLO(str(self.settings.yolo_weights))
                 self._yolo.fuse()
 
-            if self._classifier is None:
+            if required_model == "cross" and self._classifier is None:
                 if not self.settings.classifier_weights.exists():
                     raise FileNotFoundError(
                         f"Classifier weights not found: {self.settings.classifier_weights}"
@@ -121,6 +126,16 @@ class CrossAttentionDemoPipeline:
                 model.to(self._device)
                 model.eval()
                 self._classifier = model
+
+            if required_model == "swin" and self._swin_classifier is None:
+                if not self.settings.swin_weights.exists():
+                    raise FileNotFoundError(
+                        f"Swin Classifier weights not found: {self.settings.swin_weights}"
+                    )
+                model = build_swin_classifier(str(self.settings.swin_weights), num_fdi=33)
+                model.to(self._device)
+                model.eval()
+                self._swin_classifier = model
 
     def _output_url_from_path(self, local_path: Path) -> Optional[str]:
         if local_path is None:
@@ -212,12 +227,16 @@ class CrossAttentionDemoPipeline:
         with self._lock:
             self._yolo = None
             self._classifier = None
+            self._swin_classifier = None
             torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
     # ------------------------------------------------------------------
-    def predict(self, image_path: Path, request_id: Optional[str] = None, *, only_positive: bool = False) -> DemoPrediction:
-        self.ensure_loaded()
-        assert self._yolo is not None and self._classifier is not None  # for type checkers
+    def predict(self, image_path: Path, request_id: Optional[str] = None, *, only_positive: bool = False, model_type: str = "cross") -> DemoPrediction:
+        self.ensure_loaded(required_model=model_type)
+        if model_type == "swin":
+            assert self._yolo is not None and self._swin_classifier is not None
+        else:
+            assert self._yolo is not None and self._classifier is not None
 
         req_id = request_id or uuid4().hex
         out_dir = self.settings.output_dir / req_id
@@ -225,24 +244,36 @@ class CrossAttentionDemoPipeline:
 
         args = replace(
             self._base_args,
-            clf_path=str(self.settings.classifier_weights),
+            clf_path=str(self.settings.classifier_weights if model_type == "cross" else self.settings.swin_weights),
             save_dir=str(out_dir),
             draw_normal=not only_positive,
         )
 
         try:
-            result = infer_one_image(
-                str(image_path),
-                self._yolo,
-                self._classifier,
-                self._device,
-                args,
-                FDI_TO_IDX,
-                IDX_TO_FDI,
-                thr_cfg=self._thr_cfg,
-                return_cam=True,
-                only_positive=only_positive,
-            )
+            if model_type == "swin":
+                result = infer_one_image_swin(
+                    str(image_path),
+                    self._yolo,
+                    self._swin_classifier,
+                    self._device,
+                    args,
+                    thr_cfg=self._thr_cfg,
+                    return_cam=True,
+                    only_positive=only_positive,
+                )
+            else:
+                result = infer_one_image(
+                    str(image_path),
+                    self._yolo,
+                    self._classifier,
+                    self._device,
+                    args,
+                    FDI_TO_IDX,
+                    IDX_TO_FDI,
+                    thr_cfg=self._thr_cfg,
+                    return_cam=True,
+                    only_positive=only_positive,
+                )
         except Exception as exc:  # pragma: no cover - defensive path
             shutil.rmtree(out_dir, ignore_errors=True)
             raise DemoInferenceError(str(exc)) from exc
