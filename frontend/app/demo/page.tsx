@@ -597,7 +597,10 @@ export default function DemoPage(): JSX.Element {
                       className="rounded bg-slate-950 border-slate-700 px-2 py-1 text-xs text-slate-200 focus:ring-cyan-400"
                     >
                       <option value="cross">Cross Attention</option>
-                      <option value="swin">Swin Transformer</option>
+                      <option value="swin">Swin Transformer (Tiny)</option>
+                      <option value="swin_small">
+                        Swin Transformer (Small)
+                      </option>
                     </select>
                   </label>
                   <label className="flex items-center gap-2 text-sm text-slate-200">

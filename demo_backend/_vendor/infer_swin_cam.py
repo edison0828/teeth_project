@@ -82,13 +82,13 @@ class CrossAttentionWithBias(nn.Module):
         return self.o_proj(out), attn
 
 class MultiModalSwin_CA(nn.Module):
-    def __init__(self, num_fdi_classes, fdi_dim=32, attn_dim=256, attn_heads=8, num_queries=4, structured_dim=32):
+    def __init__(self, num_fdi_classes, backbone_name='swin_tiny_patch4_window7_224', fdi_dim=32, attn_dim=256, attn_heads=8, num_queries=4, structured_dim=32):
         super().__init__()
-        # 使用 Swin-Tiny (Hierarchical Vision Transformer)
+        # 使用 Swin Transformer (Hierarchical Vision Transformer)
 
         self.backbone = timm.create_model(
-            'swin_tiny_patch4_window7_224', pretrained=False, features_only=True, out_indices=(3,))
-        self.img_feat_channels = 768  # Swin-T last stage channels
+            backbone_name, pretrained=False, features_only=True, out_indices=(3,))
+        self.img_feat_channels = 768  # Swin-T/S last stage channels
 
         self.fdi_embedding = nn.Embedding(num_fdi_classes, fdi_dim)
         self.fdi_norm_scale = nn.Parameter(torch.tensor(1.0))
@@ -239,8 +239,8 @@ NORMAL_COLOR = (90, 200, 90)
 # =========================
 # 3. Model Builder
 # =========================
-def build_swin_classifier(ckpt_path, num_fdi=33):
-    model = MultiModalSwin_CA(num_fdi_classes=num_fdi)
+def build_swin_classifier(ckpt_path, num_fdi=33, backbone_name='swin_tiny_patch4_window7_224'):
+    model = MultiModalSwin_CA(num_fdi_classes=num_fdi, backbone_name=backbone_name)
     # Load weights
     state = torch.load(ckpt_path, map_location="cpu")
     if isinstance(state, dict) and "state_dict" in state:

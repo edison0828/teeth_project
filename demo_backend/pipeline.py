@@ -89,6 +89,7 @@ class CrossAttentionDemoPipeline:
         self._yolo: Optional[YOLO] = None
         self._classifier: Optional[torch.nn.Module] = None
         self._swin_classifier: Optional[torch.nn.Module] = None
+        self._swin_small_classifier: Optional[torch.nn.Module] = None
         self._thr_cfg: Optional[Dict[str, object]] = None
         self._base_args = DemoInferenceArgs(
             clf_path=str(settings.classifier_weights),
@@ -132,10 +133,21 @@ class CrossAttentionDemoPipeline:
                     raise FileNotFoundError(
                         f"Swin Classifier weights not found: {self.settings.swin_weights}"
                     )
+                # default backbone is tiny
                 model = build_swin_classifier(str(self.settings.swin_weights), num_fdi=33)
                 model.to(self._device)
                 model.eval()
                 self._swin_classifier = model
+
+            if required_model == "swin_small" and self._swin_small_classifier is None:
+                if not self.settings.swin_small_weights.exists():
+                    raise FileNotFoundError(
+                        f"Swin Small Classifier weights not found: {self.settings.swin_small_weights}"
+                    )
+                model = build_swin_classifier(str(self.settings.swin_small_weights), num_fdi=33, backbone_name='swin_small_patch4_window7_224')
+                model.to(self._device)
+                model.eval()
+                self._swin_small_classifier = model
 
     def _output_url_from_path(self, local_path: Path) -> Optional[str]:
         if local_path is None:
@@ -228,6 +240,7 @@ class CrossAttentionDemoPipeline:
             self._yolo = None
             self._classifier = None
             self._swin_classifier = None
+            self._swin_small_classifier = None
             torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
     # ------------------------------------------------------------------
@@ -235,8 +248,13 @@ class CrossAttentionDemoPipeline:
         self.ensure_loaded(required_model=model_type)
         if model_type == "swin":
             assert self._yolo is not None and self._swin_classifier is not None
+            clf_weights = self.settings.swin_weights
+        elif model_type == "swin_small":
+            assert self._yolo is not None and self._swin_small_classifier is not None
+            clf_weights = self.settings.swin_small_weights
         else:
             assert self._yolo is not None and self._classifier is not None
+            clf_weights = self.settings.classifier_weights
 
         req_id = request_id or uuid4().hex
         out_dir = self.settings.output_dir / req_id
@@ -244,17 +262,18 @@ class CrossAttentionDemoPipeline:
 
         args = replace(
             self._base_args,
-            clf_path=str(self.settings.classifier_weights if model_type == "cross" else self.settings.swin_weights),
+            clf_path=str(clf_weights),
             save_dir=str(out_dir),
             draw_normal=not only_positive,
         )
 
         try:
-            if model_type == "swin":
+            if model_type in ["swin", "swin_small"]:
+                clf_model = self._swin_classifier if model_type == "swin" else self._swin_small_classifier
                 result = infer_one_image_swin(
                     str(image_path),
                     self._yolo,
-                    self._swin_classifier,
+                    clf_model,
                     self._device,
                     args,
                     thr_cfg=self._thr_cfg,
